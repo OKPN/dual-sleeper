@@ -177,6 +177,19 @@ def load_config():
     return default_config
 
 def main():
+    # Discord Webhook テスト送信のコマンドライン引数判定
+    if len(sys.argv) > 1 and sys.argv[1] == "--test-webhook":
+        config = load_config()
+        url = config.get("discord_webhook_url", "")
+        if not url:
+            print("[エラー] config.json に discord_webhook_url が設定されていません。")
+            sys.exit(1)
+        print(f"Discord Webhookのテスト送信を行っています... (URL: {url[:30]}...)")
+        pc_name = get_computer_name()
+        send_discord_notification(url, f"🔔 **[{pc_name}]** Webhookテスト通知です。このメッセージが見えていれば連携は成功しています！")
+        print("テストメッセージを送信しました。Discordのチャンネルを確認してください。")
+        sys.exit(0)
+
     print("=" * 60)
     print(" Dual Sleeper - 段階的電源管理システム")
     print("=" * 60)

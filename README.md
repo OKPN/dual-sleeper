@@ -39,6 +39,7 @@
 *   `config.json`: **[ローカル専用]** 実際の動作設定ファイル（`.gitignore` によりGit管理から自動除外されます）。
 *   `requirements.txt`: 動作に必要な外部ライブラリ（`psutil`）を指定。
 *   `run.bat`: ライブラリの準備からスクリプトの起動までをダブルクリックで行うバッチファイル。
+*   `test_webhook.bat`: **[テスト用]** `config.json` に設定したDiscord Webhookが正しく動くか検証するバッチファイル。
 *   `.gitignore`: `config.json` などの個人環境設定ファイルをGitにコミットしないための設定。
 
 ---
@@ -72,7 +73,7 @@
 | `idle_limit_seconds` | `180` | モニター消灯を検討し始める無操作時間（秒）。（例: 180秒 ➔ 3分） |
 | `network_limit_kbs` | `5.0` | 通信が発生していないとみなす通信速度のしきい値（KB/s）。 |
 | `network_check_duration_seconds` | `60` | 通信量がしきい値以下であるかを確認し続ける判定時間（秒）。 |
-| `check_interval_seconds` | `5` | PC의 稼働状態をチェックする周期（秒）。通常はこのままでOKです。 |
+| `check_interval_seconds` | `5` | PCの稼働状態をチェックする周期（秒）。通常はこのままでOKです。 |
 | `standby_after_monitor_off_seconds` | `300` | モニターが消灯したあと、PC本体をスリープさせるまでの無通信待機時間（秒）。 |
 | `hibernate_start_hour` | `0` | 夜間休止状態（ハイバネート）を適用する開始時刻（時）。 |
 | `hibernate_end_hour` | `7` | 夜間休止状態（ハイバネート）を適用する終了時刻（時）。 |
@@ -82,7 +83,7 @@
 
 ---
 
-## 🔔 Discord Webhookの設定方法
+## 🔔 Discord Webhookの設定とテスト方法
 
 1.  通知を受け取りたいDiscordチャンネルの **「設定 (歯車マーク)」** ➔ **「連携サービス」** ➔ **「ウェブフック」** を選択します。
 2.  **「新しいウェブフック」** を作成し、**「ウェブフック URL をコピー」** をクリックします。
@@ -90,3 +91,5 @@
     ```json
     "discord_webhook_url": "https://discord.com/api/webhooks/..."
     ```
+4.  設定完了後、フォルダー内にある **`test_webhook.bat`** をダブルクリックして実行します。
+5.  設定したDiscordチャンネルにテスト通知が届くか確認してください。届いていれば連携は無事に完了しています！
