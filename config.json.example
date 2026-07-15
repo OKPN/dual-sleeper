@@ -1,11 +1,11 @@
 {
-  "idle_limit_seconds": 180,
+  "idle_limit_seconds": 10,
   "network_limit_kbs": 20.0,
-  "network_check_duration_seconds": 60,
+  "network_check_duration_seconds": 10,
   "check_interval_seconds": 5,
-  "standby_after_monitor_off_seconds": 300,
-  "hibernate_start_hour": 0,
-  "hibernate_end_hour": 7,
+  "standby_after_monitor_off_seconds": 10,
+  "hibernate_start_hour": 4,
+  "hibernate_end_hour": 11,
   "force_monitor_off_idle_seconds": 900,
   "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
   "sleep_pending_seconds": 10
