@@ -10,5 +10,6 @@
   "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
   "sleep_pending_seconds": 10,
   "gpu_protect_processes": ["python.exe", "python"],
-  "gpu_limit_percent": 10
+  "gpu_limit_percent": 10,
+  "high_network_limit_kbs": 625.0
 }

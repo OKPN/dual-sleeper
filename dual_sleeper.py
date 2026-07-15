@@ -206,7 +206,8 @@ def load_config():
         "discord_webhook_url": "",
         "sleep_pending_seconds": 10,
         "gpu_protect_processes": ["python.exe", "python"],
-        "gpu_limit_percent": 10
+        "gpu_limit_percent": 10,
+        "high_network_limit_kbs": 625.0
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     if os.path.exists(config_path):
@@ -243,7 +244,8 @@ def main():
     config = load_config()
     print("現在の設定:")
     print(f"  ・無操作しきい値      : {config['idle_limit_seconds']} 秒")
-    print(f"  ・通信量しきい値      : {config['network_limit_kbs']} KB/s")
+    print(f"  ・通常通信しきい値    : {config['network_limit_kbs']} KB/s")
+    print(f"  ・高通信しきい値      : {config.get('high_network_limit_kbs', 625.0)} KB/s (配信等保護用)")
     print(f"  ・通信監視時間        : {config['network_check_duration_seconds']} 秒")
     print(f"  ・監視ポーリング間隔  : {config['check_interval_seconds']} 秒")
     
@@ -302,7 +304,7 @@ def main():
             current_time = time.time()
             physical_active_time = current_time - physical_idle
             
-            # 物理入力の時刻と、モニター復帰時刻のいずれか新しい方を最終アクティブ時刻とする
+            # 物理入力の時刻と、モニター復帰時刻 of いずれか新しい方を最終アクティブ時刻とする
             effective_active_time = max(physical_active_time, last_wakeup_time)
             idle_sec = current_time - effective_active_time
             
@@ -383,11 +385,19 @@ def main():
                     gpu_procs = config.get("gpu_protect_processes", [])
                     gpu_util, gpu_protect_active = get_gpu_status(gpu_procs)
                     
-                    # GPUによる保護が有効かつ、高負荷で対象プロセスが動作中であるか判定
-                    is_gpu_busy = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
+                    # GPUによる保護が有効かつ、高負荷で対象プロセスが動作中であるか判定 (LoRA学習中)
+                    is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
                     
-                    # 低通信、かつ、GPU保護対象プロセスが忙しくない場合のみスリープ移行を進める
-                    if speed <= config['network_limit_kbs'] and not is_gpu_busy:
+                    # 高トラフィック（配信など）のしきい値を取得 (デフォルト: 625.0 KB/s = 5 Mbps)
+                    high_net_limit = config.get("high_network_limit_kbs", 625.0)
+                    
+                    # 【スリープを許可する条件（論理式の最適化）】
+                    # (1) LoRA学習 (pythonでのGPU高負荷) が動いていない
+                    # (2) かつ、通信量が極端に高くない（配信中や超高速ダウンロード中でない：high_net_limit未満）
+                    # ※通信がhigh_net_limit未満で、かつpythonで忙しくなければ、たとえゲーム(python以外)がGPUを消費していてもスリープを許可します。
+                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit)
+                    
+                    if allow_sleep:
                         if low_net_standby_start_time is None:
                             low_net_standby_start_time = time.time()
                         
@@ -460,14 +470,16 @@ def main():
                     else:
                         # 通信量上昇またはGPU高負荷によるリセット
                         if low_net_standby_start_time is not None:
-                            if is_gpu_busy:
-                                print(f"\n[情報] GPU保護対象プロセスが動作中のためスリープタイマーをリセットします。GPU: {gpu_util}% (対象プロセス検知)")
-                            else:
-                                print(f"\n[情報] 通信量上昇を検知したためスリープタイマーをリセットします。速度: {speed:.1f} KB/s")
+                            if is_gpu_busy_with_python:
+                                print(f"\n[情報] LoRA学習中(python高負荷)を検知したためスリープタイマーをリセットします。GPU: {gpu_util}%")
+                            elif speed >= high_net_limit:
+                                print(f"\n[情報] 高トラフィック(配信または高速DL: {speed:.1f} KB/s)を検知したためスリープタイマーをリセットします。")
                         low_net_standby_start_time = None
                         
-                        if is_gpu_busy:
-                            print(f"\r[モニターOFF] GPU保護中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}% (保護中)  ", end="", flush=True)
+                        if is_gpu_busy_with_python:
+                            print(f"\r[モニターOFF] LoRA学習保護中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}% (python)  ", end="", flush=True)
+                        elif speed >= high_net_limit:
+                            print(f"\r[モニターOFF] 配信/高速DL保護中... | 通信: {speed:.1f} KB/s (高トラフィック)  ", end="", flush=True)
                         else:
                             print(f"\r[モニターOFF] 通信待機中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
                 else:
