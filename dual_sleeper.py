@@ -59,7 +59,14 @@ def go_to_sleep(hibernate=False):
     try:
         # SetSuspendState(hibernate, force, disableWakeup)
         # hibernate=True (1) で休止状態、False (0) でスリープ
-        ctypes.windll.powrprof.SetSuspendState(1 if hibernate else 0, 0, 0)
+        if hibernate:
+            res = ctypes.windll.powrprof.SetSuspendState(1, 0, 0)
+            # OS側で休止状態が無効化されているなどの理由で失敗した場合(戻り値が0)、通常のスタンバイにフォールバック
+            if not res:
+                print("[警告] 休止状態の実行に失敗しました。通常のスタンバイ（スリープ）を実行します。")
+                ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+        else:
+            ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
     except Exception as e:
         print(f"電源状態の変更に失敗しました: {e}")
 

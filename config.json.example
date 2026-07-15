@@ -1,6 +1,6 @@
 {
   "idle_limit_seconds": 180,
-  "network_limit_kbs": 5.0,
+  "network_limit_kbs": 20.0,
   "network_check_duration_seconds": 60,
   "check_interval_seconds": 5,
   "standby_after_monitor_off_seconds": 300,
