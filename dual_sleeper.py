@@ -41,11 +41,11 @@ def get_last_input_time_raw():
 
 def turn_off_monitor():
     """モニターの電源をオフにします。"""
-    ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
+    ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
 
 def turn_on_monitor():
     """モニターの電源をオンにし、マウス入力をシミュレートして復帰を促します。"""
-    ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, -1)
+    ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, -1)
     
     # 確実に復帰させるため、マウスカーソルを少し動かして戻す
     pt = POINT()
