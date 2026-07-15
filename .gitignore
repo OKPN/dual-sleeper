@@ -1,0 +1,9 @@
+# ローカルのプライベート設定ファイルを無視
+config.json
+
+# Pythonのキャッシュファイルを無視
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
