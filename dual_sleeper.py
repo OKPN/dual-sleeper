@@ -7,6 +7,7 @@ import datetime
 import socket
 import urllib.request
 import urllib.error
+import subprocess
 import psutil
 
 # Windows API 定義
@@ -107,6 +108,49 @@ def send_discord_notification(webhook_url, message):
     except Exception as e:
         print(f"\n[警告] Discord通知の送信に失敗しました: {e}")
 
+def get_gpu_status(protect_processes):
+    """
+    NVIDIA GPUの使用率(%)と、現在GPUを使用している保護対象プロセスの有無を判定します。
+    戻り値: (gpu_utilization_percent, is_protect_process_active)
+    """
+    gpu_util = 0
+    protect_active = False
+    
+    if not protect_processes:
+        return 0, False
+        
+    try:
+        # 1. GPU使用率を取得
+        util_output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+            shell=True,
+            stderr=subprocess.DEVNULL
+        ).decode("utf-8").strip()
+        gpu_util = int(util_output)
+        
+        # 2. 現在GPUを使用しているプロセス名一覧を取得
+        proc_output = subprocess.check_output(
+            ["nvidia-smi", "--query-compute-apps=process_name", "--format=csv,noheader"],
+            shell=True,
+            stderr=subprocess.DEVNULL
+        ).decode("utf-8").strip()
+        
+        if proc_output:
+            active_procs = [p.strip().lower() for p in proc_output.split("\n") if p.strip()]
+            for protect_p in protect_processes:
+                p_name_lower = protect_p.lower()
+                for active_p in active_procs:
+                    if p_name_lower in active_p:
+                        protect_active = True
+                        break
+                if protect_active:
+                    break
+    except Exception:
+        # nvidia-smiが実行できない環境では0%とみなし、保護も無効とする
+        pass
+        
+    return gpu_util, protect_active
+
 class NetworkMonitor:
     def __init__(self):
         self.last_io_by_nic = self._get_filtered_io()
@@ -160,7 +204,9 @@ def load_config():
         "hibernate_end_hour": 11,
         "force_monitor_off_idle_seconds": 900,
         "discord_webhook_url": "",
-        "sleep_pending_seconds": 10
+        "sleep_pending_seconds": 10,
+        "gpu_protect_processes": ["python.exe", "python"],
+        "gpu_limit_percent": 10
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     if os.path.exists(config_path):
@@ -216,6 +262,13 @@ def main():
         print(f"  ・強制モニター消灯    : {force_off_limit} 秒 (無操作継続時、通信の有無を問わず)")
     else:
         print("  ・強制モニター消灯    : 無効")
+        
+    gpu_limit = config.get("gpu_limit_percent", 0)
+    gpu_procs = config.get("gpu_protect_processes", [])
+    if gpu_limit > 0 and gpu_procs:
+        print(f"  ・GPU保護しきい値     : {gpu_limit} % (対象: {', '.join(gpu_procs)})")
+    else:
+        print("  ・GPU保護設定         : 無効")
         
     webhook_url = config.get("discord_webhook_url", "")
     if webhook_url:
@@ -322,15 +375,24 @@ def main():
                     net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
                     continue
 
-                # 2. スタンバイ判定のためのネットワーク監視
+                # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 standby_limit = config.get("standby_after_monitor_off_seconds", 0)
                 if standby_limit > 0:
-                    if speed <= config['network_limit_kbs']:
+                    # GPUの状態を取得
+                    gpu_limit = config.get("gpu_limit_percent", 0)
+                    gpu_procs = config.get("gpu_protect_processes", [])
+                    gpu_util, gpu_protect_active = get_gpu_status(gpu_procs)
+                    
+                    # GPUによる保護が有効かつ、高負荷で対象プロセスが動作中であるか判定
+                    is_gpu_busy = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
+                    
+                    # 低通信、かつ、GPU保護対象プロセスが忙しくない場合のみスリープ移行を進める
+                    if speed <= config['network_limit_kbs'] and not is_gpu_busy:
                         if low_net_standby_start_time is None:
                             low_net_standby_start_time = time.time()
                         
                         elapsed_low_net_standby = time.time() - low_net_standby_start_time
-                        print(f"\r[モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                        print(f"\r[モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
                         
                         # スリープ監視時間経過でシステムをサスペンド/ハイバネート
                         if elapsed_low_net_standby >= standby_limit:
@@ -396,10 +458,18 @@ def main():
                             time.sleep(2)
                             net_monitor.get_speed()
                     else:
+                        # 通信量上昇またはGPU高負荷によるリセット
                         if low_net_standby_start_time is not None:
-                            print(f"\n[情報] 通信量上昇を検知したためスリープタイマーをリセットします。速度: {speed:.1f} KB/s")
+                            if is_gpu_busy:
+                                print(f"\n[情報] GPU保護対象プロセスが動作中のためスリープタイマーをリセットします。GPU: {gpu_util}% (対象プロセス検知)")
+                            else:
+                                print(f"\n[情報] 通信量上昇を検知したためスリープタイマーをリセットします。速度: {speed:.1f} KB/s")
                         low_net_standby_start_time = None
-                        print(f"\r[モニターOFF] 通信待機中... | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                        
+                        if is_gpu_busy:
+                            print(f"\r[モニターOFF] GPU保護中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}% (保護中)  ", end="", flush=True)
+                        else:
+                            print(f"\r[モニターOFF] 通信待機中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
                 else:
                     # スリープ無効時の静か待機
                     pass
