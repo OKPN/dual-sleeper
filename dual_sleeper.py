@@ -204,7 +204,7 @@ def load_config():
         "hibernate_end_hour": 11,
         "force_monitor_off_idle_seconds": 900,
         "discord_webhook_url": "",
-        "sleep_pending_seconds": 10,
+        "sleep_pending_seconds": 30,
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0
