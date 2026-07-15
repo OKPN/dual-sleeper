@@ -261,6 +261,7 @@ def main():
             if state != 2 and force_off_limit > 0 and idle_sec >= force_off_limit:
                 print(f"\n[実行] 長時間の無操作 ({idle_sec:.1f} 秒) を検知したため、通信状態を問わずモニターをオフにします。")
                 turn_off_monitor()
+                time.sleep(1.0) # 消灯時のシステムラグやマウスの微振動をやり過ごす
                 state = 2
                 monitor_off_input_time = get_last_input_time_raw()
                 low_net_standby_start_time = None
@@ -298,6 +299,7 @@ def main():
                     if elapsed_low_net >= config['network_check_duration_seconds']:
                         print("\n[実行] モニターをオフにします。")
                         turn_off_monitor()
+                        time.sleep(1.0) # 消灯時のシステムラグやマウスの微振動をやり過ごす
                         state = 2
                         monitor_off_input_time = get_last_input_time_raw()
                         low_net_standby_start_time = None # スタンバイ監視用タイマーを初期化
