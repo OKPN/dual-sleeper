@@ -458,15 +458,22 @@ def main():
                                     f"💤 **[{pc_name}]** システムを {mode_name} にしました。おやすみなさい。"
                                 )
                             
-                            state = 0 # 復帰後に通常監視から開始するようにする
-                            last_wakeup_time = time.time() # 復帰時に無操作時間がリセットされるようにする
+                            # 復帰直後は「消灯状態（State 2）」から開始するように設定
+                            state = 2 
                             low_net_standby_start_time = None
-                            
+                             
                             go_to_sleep(hibernate=use_hibernate)
-                            
+                             
+                            # ===== ここからスリープ復帰後の処理 =====
                             # 復帰した直後, ネットワークモニターをリセット
                             time.sleep(2)
                             net_monitor.get_speed()
+                             
+                            # 復帰時のノイズや電源ボタン押下を「ユーザー操作」と誤検知するのを防ぐため、
+                            # 復帰直後の静まった状態の入力タイムスタンプを「消灯時の入力」として上書き記録する
+                            monitor_off_input_time = get_last_input_time_raw()
+                            # 復帰直後の無操作時間を0秒からカウントするために、last_wakeup_timeを現在時刻でリセット
+                            last_wakeup_time = time.time()
                     else:
                         # 通信量上昇またはGPU高負荷によるリセット
                         if low_net_standby_start_time is not None:
