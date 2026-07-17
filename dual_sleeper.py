@@ -503,9 +503,6 @@ def main():
                     is_downloading = is_downloading_active(downloads_dir)
                     
                     # 【スリープを許可する条件】
-                    # (1) LoRA学習 (pythonでのGPU高負荷) が動いていない
-                    # (2) かつ、通信量が極端に高くない（配信中や超高速ダウンロード中でない）
-                    # (3) かつ、ブラウザによる「ファイルのダウンロード中」ではない（一時ファイルがない）
                     allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading)
                     
                     if allow_sleep:
@@ -560,19 +557,17 @@ def main():
                                     is_retrying = False
                                     continue
                             
-                            # スリープ実行通知の送信
+                            # ※ 成否がまだ確定していないため、スリープ実行時の「💤システムをスリープにしました」通知は送信しません。
+                            # （スリープ成功の有無は、後から目覚めた瞬間に「復帰通知」として確定した実績をスマホへ送信します）
                             print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
-                            send_notifications(
-                                config,
-                                f"💤 **[{pc_name}]** システムを {mode_name} にしました。おやすみなさい。"
-                            )
                             
                             # 復帰直後は「消灯状態（State 2）」から開始するように設定
                             state = 2 
                             low_net_standby_start_time = None
                             
-                            # スリープに入る直前の物理時刻を記録
+                            # スリープに入る直前の物理時刻と現在時刻を記録
                             sleep_call_time = time.time()
+                            sleep_start_dt = datetime.datetime.now()
                              
                             go_to_sleep(hibernate=use_hibernate)
                              
@@ -596,15 +591,37 @@ def main():
                                 if not is_retrying:
                                     send_notifications(
                                         config,
-                                        f"⚠️ **[{pc_name}]** スリープの移行に失敗した（または即時誤復帰した）ため、成功するまで30秒おきにリトライ処理に入ります。"
+                                        f"⚠️ **[{pc_name}]** スリープの移行に失敗したため、成功するまで30秒おきにリトライ処理に入ります。"
                                     )
                                     
                                 is_retrying = True # リretryフラグをON
                                 # スリープタイマーを「残り30秒」の状態にセットする
                                 low_net_standby_start_time = time.time() - (standby_limit - 30)
                             else:
-                                # 15秒以上経って戻ってきた ➔ 本物の復帰！
+                                # 15秒以上経って戻ってきた ➔ 本物のスリープ成功＆正常復帰！
                                 print(f"\n{get_timestamp()} [情報] スリープから復帰しました。モニター消灯状態（State 2）から通常通り再開します。")
+                                
+                                # スリープの開始、終了時刻、および睡眠実績時間を計算して通知
+                                sleep_end_dt = datetime.datetime.now()
+                                duration_seconds = int(sleep_duration)
+                                hours = duration_seconds // 3600
+                                minutes = (duration_seconds % 3600) // 60
+                                
+                                duration_str = ""
+                                if hours > 0:
+                                    duration_str += f"{hours}時間"
+                                duration_str += f"{minutes}分"
+                                if hours == 0 and minutes == 0:
+                                    duration_str = f"{duration_seconds}秒"
+                                    
+                                send_notifications(
+                                    config,
+                                    f"🟢 **[{pc_name}]** スリープから正常に復帰しました。\n"
+                                    f"・スリープ開始: {sleep_start_dt.strftime('%m/%d %H:%M:%S')}\n"
+                                    f"・スリープ解除: {sleep_end_dt.strftime('%m/%d %H:%M:%S')}\n"
+                                    f"・スリープ時間: {duration_str}"
+                                )
+                                
                                 is_retrying = False # リretryフラグをOFF
                                 # 通常通りタイマーをリセット（また300秒待つ）
                                 low_net_standby_start_time = None
