@@ -14,7 +14,6 @@
   "telegram_chat_id": "YOUR_TELEGRAM_CHAT_ID_HERE",
   "sleep_pending_seconds": 30,
   "wakeup_mouse_distance_px": 100,
-  "wakeup_mouse_grace_seconds": 20,
   "gpu_protect_processes": ["python.exe", "python"],
   "gpu_limit_percent": 10,
   "high_network_limit_kbs": 625.0

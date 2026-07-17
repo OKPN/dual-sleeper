@@ -308,7 +308,6 @@ def load_config():
         "telegram_chat_id": "",
         "sleep_pending_seconds": 30,
         "wakeup_mouse_distance_px": 100,
-        "wakeup_mouse_grace_seconds": 20,
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0
@@ -418,9 +417,6 @@ def main():
     # モニター復帰マウス移動距離しきい値の出力
     print(f"  ・モニター復帰マウス距離: {config.get('wakeup_mouse_distance_px', 100)} px (大きく動かした時のみ復帰)")
     
-    # スリープ復帰後の入力無視時間の出力
-    print(f"  ・復帰後マウス無視時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (復帰直後のノイズ防止用)")
-    
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
@@ -447,9 +443,6 @@ def main():
     
     # マウス座標記録用
     last_mouse_x, last_mouse_y = 0, 0
-    
-    # スリープ復帰後の入力ガード物理時刻
-    wakeup_grace_until = 0
 
     try:
         while True:
@@ -533,29 +526,20 @@ def main():
                 # 【消灯状態】
                 # 1. マウスが大きく動かされたか（指定ピクセル以上）だけで復帰判定を行う（キー入力やクリックは除外）
                 curr_x, curr_y = get_mouse_position()
+                dx = abs(curr_x - last_mouse_x)
+                dy = abs(curr_y - last_mouse_y)
+                limit_px = config.get("wakeup_mouse_distance_px", 100)
                 
-                # スリープ復帰後の指定秒間の猶予期間中か判定
-                is_grace_period = (time.time() < wakeup_grace_until)
-                
-                if is_grace_period:
-                    # 猶予期間中はマウス位置のズレを無視し、ひたすら現在の正しい座標を上書き追従し続ける
-                    last_mouse_x, last_mouse_y = curr_x, curr_y
-                else:
-                    # 猶予期間を過ぎたら、通常のマウス移動監視を開始
-                    dx = abs(curr_x - last_mouse_x)
-                    dy = abs(curr_y - last_mouse_y)
-                    limit_px = config.get("wakeup_mouse_distance_px", 100)
-                    
-                    if dx >= limit_px or dy >= limit_px:
-                        print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。モニターをオンにします。")
-                        turn_on_monitor()
-                        state = 0
-                        last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
-                        net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
-                        is_retrying = False # 操作復帰時にリトライフラグをクリア
-                        retry_start_time = None
-                        has_sent_10min_warning = False
-                        continue
+                if dx >= limit_px or dy >= limit_px:
+                    print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。モニターをオンにします。")
+                    turn_on_monitor()
+                    state = 0
+                    last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
+                    net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
+                    is_retrying = False # 操作復帰時にリトライフラグをクリア
+                    retry_start_time = None
+                    has_sent_10min_warning = False
+                    continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 standby_limit = config.get("standby_after_monitor_off_seconds", 0)
@@ -665,7 +649,6 @@ def main():
                             # 復帰時の入力状態とマウス位置を上書き記録
                             monitor_off_input_time = get_last_input_time_raw()
                             last_mouse_x, last_mouse_y = get_mouse_position()
-                            last_wakeup_time = time.time()
                             
                             # 実際にどのくらいスリープしていたか（経過時間）を計算
                             sleep_duration = time.time() - sleep_call_time
@@ -689,7 +672,9 @@ def main():
                                 low_net_standby_start_time = time.time() - (standby_limit - 30)
                             else:
                                 # 15秒以上経って戻ってきた ➔ 本物のスリープ成功＆正常復帰！
-                                print(f"\n{get_timestamp()} [情報] スリープから復帰しました。モニター消灯状態（State 2）から通常通り再開します。")
+                                # ※復帰直後は「モニター点灯（State 0）」から開始し、20秒放置で即消灯プロセスへ急行させる
+                                print(f"\n{get_timestamp()} [情報] スリープから復帰しました。通常稼働（State 0）から再開します。")
+                                turn_on_monitor()
                                 
                                 # スリープの開始、終了時刻、および睡眠実績時間を計算して通知
                                 sleep_end_dt = datetime.datetime.now()
@@ -712,9 +697,10 @@ def main():
                                     f"·スリープ時間: {duration_str}"
                                 )
                                 
-                                # 復帰後指定秒間の操作検知ガード時間をセット
-                                grace_sec = config.get("wakeup_mouse_grace_seconds", 20)
-                                wakeup_grace_until = time.time() + grace_sec
+                                state = 0
+                                # 復帰直後だが、すでに「無操作で100秒間放置されている」と見なすダミー時刻をセット
+                                # これにより、誰も操作しなければ20秒後に自動で State 1 ➔ State 2 (消灯) へ急行します。
+                                last_wakeup_time = time.time() - (config.get("idle_limit_seconds", 120) - 20)
                                 
                                 is_retrying = False # リretryフラグをOFF
                                 retry_start_time = None
