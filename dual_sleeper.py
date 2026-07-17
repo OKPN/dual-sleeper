@@ -308,6 +308,7 @@ def load_config():
         "telegram_chat_id": "",
         "sleep_pending_seconds": 30,
         "wakeup_mouse_distance_px": 100,
+        "wakeup_mouse_grace_seconds": 20,
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0
@@ -416,6 +417,9 @@ def main():
         
     # モニター復帰マウス移動距離しきい値の出力
     print(f"  ・モニター復帰マウス距離: {config.get('wakeup_mouse_distance_px', 100)} px (大きく動かした時のみ復帰)")
+    
+    # スリープ復帰後の入力無視時間の出力
+    print(f"  ・復帰後マウス無視時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (復帰直後のノイズ防止用)")
     
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
@@ -530,7 +534,7 @@ def main():
                 # 1. マウスが大きく動かされたか（指定ピクセル以上）だけで復帰判定を行う（キー入力やクリックは除外）
                 curr_x, curr_y = get_mouse_position()
                 
-                # スリープ復帰後の20秒猶予期間中か判定
+                # スリープ復帰後の指定秒間の猶予期間中か判定
                 is_grace_period = (time.time() < wakeup_grace_until)
                 
                 if is_grace_period:
@@ -708,8 +712,9 @@ def main():
                                     f"·スリープ時間: {duration_str}"
                                 )
                                 
-                                # 復帰後20秒間の操作検知ガード時間をセット
-                                wakeup_grace_until = time.time() + 20.0
+                                # 復帰後指定秒間の操作検知ガード時間をセット
+                                grace_sec = config.get("wakeup_mouse_grace_seconds", 20)
+                                wakeup_grace_until = time.time() + grace_sec
                                 
                                 is_retrying = False # リretryフラグをOFF
                                 retry_start_time = None
