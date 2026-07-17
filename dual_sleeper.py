@@ -56,6 +56,22 @@ def get_last_input_time_raw():
         return lii.dwTime
     return 0
 
+def get_mouse_position():
+    """現在のマウスカーソルの座標 (x, y) を取得します。"""
+    pt = POINT()
+    if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+        return pt.x, pt.y
+    return 0, 0
+
+def is_any_key_pressed():
+    """キーボードのいずれかのキー、またはマウスクリックが現在押されているか判定します。"""
+    # 仮想キーコード (1: 左クリック 〜 255) の範囲をチェック
+    for key in range(1, 256):
+        # GetAsyncKeyState の最上位ビット（0x8000）が立っていれば押されていると判定
+        if ctypes.windll.user32.GetAsyncKeyState(key) & 0x8000:
+            return True
+    return False
+
 def turn_off_monitor():
     """モニターの電源をオフにします。"""
     ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
@@ -429,6 +445,9 @@ def main():
     is_retrying = False # スリープ失敗時のリretry中フラグ
     retry_start_time = None # リretry開始の物理時刻
     has_sent_10min_warning = False # 10分経過警告の送信済みフラグ
+    
+    # マウス座標記録用
+    last_mouse_x, last_mouse_y = 0, 0
 
     try:
         while True:
@@ -455,6 +474,7 @@ def main():
                 time.sleep(1.0) # 消灯時のシステムラグやマウスの微振動をやり過ごす
                 state = 2
                 monitor_off_input_time = get_last_input_time_raw()
+                last_mouse_x, last_mouse_y = get_mouse_position()
                 low_net_standby_start_time = None
                 time.sleep(config['check_interval_seconds'])
                 continue
@@ -498,6 +518,7 @@ def main():
                         time.sleep(1.0) # 消灯時のシステムラグやマウスの微振動をやり過ごす
                         state = 2
                         monitor_off_input_time = get_last_input_time_raw()
+                        last_mouse_x, last_mouse_y = get_mouse_position()
                         low_net_standby_start_time = None # スタンバイ監視用タイマーを初期化
                 else:
                     # 通信量がしきい値を超えたら計測タイマーをリセット
@@ -511,15 +532,32 @@ def main():
                 # 1. 最後に操作した時間（TickCount）が変わったかをチェックして復帰判定
                 current_input_time = get_last_input_time_raw()
                 if current_input_time != monitor_off_input_time:
-                    print(f"\n{get_timestamp()} [復帰] 操作を検知しました。モニターをオンにします。")
-                    turn_on_monitor()
-                    state = 0
-                    last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
-                    net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
-                    is_retrying = False # 操作復帰時にリトライフラグをクリア
-                    retry_start_time = None
-                    has_sent_10min_warning = False
-                    continue
+                    # 何らかの入力を検知したが、それが本物の操作かノイズかを判別する
+                    curr_x, curr_y = get_mouse_position()
+                    dx = abs(curr_x - last_mouse_x)
+                    dy = abs(curr_y - last_mouse_y)
+                    
+                    # 判別条件:
+                    # (a) キーボードが押された、またはクリックされた (GetAsyncKeyStateが検知)
+                    # (b) マウスが一定以上（20ピクセル以上）動かされた
+                    is_real_input = is_any_key_pressed() or (dx >= 20 or dy >= 20)
+                    
+                    if is_real_input:
+                        print(f"\n{get_timestamp()} [復帰] 操作を検知しました。モニターをオンにします。")
+                        turn_on_monitor()
+                        state = 0
+                        last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
+                        net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
+                        is_retrying = False # 操作復帰時にリトライフラグをクリア
+                        retry_start_time = None
+                        has_sent_10min_warning = False
+                        continue
+                    else:
+                        # マウスの微振動やOSの遅延デバイス初期化信号などのノイズと判定
+                        # 画面は点灯させず、現在の状態（TickCountとマウス座標）を上書きラッチして静観を続ける
+                        monitor_off_input_time = current_input_time
+                        last_mouse_x, last_mouse_y = curr_x, curr_y
+                        continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 standby_limit = config.get("standby_after_monitor_off_seconds", 0)
@@ -542,10 +580,6 @@ def main():
                     is_no_sleep = is_no_sleep_time(config.get("no_sleep_start_hour"), config.get("no_sleep_end_hour"))
                     
                     # 【スリープを許可する条件】
-                    # (1) LoRA学習 (pythonでのGPU高負荷) が動いていない
-                    # (2) かつ、通信量が極端に高くない（配信中や超高速ダウンロード中でない）
-                    # (3) かつ、ブラウザによる「ファイルのダウンロード中」ではない
-                    # (4) かつ、「スリープ禁止時間帯」ではない (被った場合は最優先)
                     allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep)
                     
                     # 【リretry中の10分継続警告チェック】
@@ -630,8 +664,9 @@ def main():
                             time.sleep(2)
                             net_monitor.get_speed()
                              
-                            # 復帰時の入力状態を上書き記録
+                            # 復帰時の入力状態とマウス位置を上書き記録
                             monitor_off_input_time = get_last_input_time_raw()
+                            last_mouse_x, last_mouse_y = get_mouse_position()
                             last_wakeup_time = time.time()
                             
                             # 実際にどのくらいスリープしていたか（経過時間）を計算
