@@ -327,7 +327,7 @@ def load_config():
     return default_config
 
 def get_timestamp():
-    """現在の時刻を [MM/DD HH:MM:SS] フォーマット of 文字列で返します。"""
+    """現在の時刻を [MM/DD HH:MM:SS] フォーマットの文字列で返します。"""
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
 
 def main():
@@ -443,6 +443,9 @@ def main():
     
     # マウス座標記録用
     last_mouse_x, last_mouse_y = 0, 0
+    
+    # スリープ復帰後の入力ガード物理時刻
+    wakeup_grace_until = 0
 
     try:
         while True:
@@ -526,22 +529,29 @@ def main():
                 # 【消灯状態】
                 # 1. マウスが大きく動かされたか（指定ピクセル以上）だけで復帰判定を行う（キー入力やクリックは除外）
                 curr_x, curr_y = get_mouse_position()
-                dx = abs(curr_x - last_mouse_x)
-                dy = abs(curr_y - last_mouse_y)
                 
-                # 設定ファイルからしきい値を取得（デフォルトは100px）
-                limit_px = config.get("wakeup_mouse_distance_px", 100)
+                # スリープ復帰後の20秒猶予期間中か判定
+                is_grace_period = (time.time() < wakeup_grace_until)
                 
-                if dx >= limit_px or dy >= limit_px:
-                    print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。モニターをオンにします。")
-                    turn_on_monitor()
-                    state = 0
-                    last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
-                    net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
-                    is_retrying = False # 操作復帰時にリトライフラグをクリア
-                    retry_start_time = None
-                    has_sent_10min_warning = False
-                    continue
+                if is_grace_period:
+                    # 猶予期間中はマウス位置のズレを無視し、ひたすら現在の正しい座標を上書き追従し続ける
+                    last_mouse_x, last_mouse_y = curr_x, curr_y
+                else:
+                    # 猶予期間を過ぎたら、通常のマウス移動監視を開始
+                    dx = abs(curr_x - last_mouse_x)
+                    dy = abs(curr_y - last_mouse_y)
+                    limit_px = config.get("wakeup_mouse_distance_px", 100)
+                    
+                    if dx >= limit_px or dy >= limit_px:
+                        print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。モニターをオンにします。")
+                        turn_on_monitor()
+                        state = 0
+                        last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
+                        net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
+                        is_retrying = False # 操作復帰時にリトライフラグをクリア
+                        retry_start_time = None
+                        has_sent_10min_warning = False
+                        continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 standby_limit = config.get("standby_after_monitor_off_seconds", 0)
@@ -693,10 +703,13 @@ def main():
                                 send_notifications(
                                     config,
                                     f"🟢 **[{pc_name}]** スリープから正常に復帰しました。\n"
-                                    f"・スリープ開始: {sleep_start_dt.strftime('%m/%d %H:%M:%S')}\n"
-                                    f"・スリープ解除: {sleep_end_dt.strftime('%m/%d %H:%M:%S')}\n"
-                                    f"・スリープ時間: {duration_str}"
+                                    f"·スリープ開始: {sleep_start_dt.strftime('%m/%d %H:%M:%S')}\n"
+                                    f"·スリープ解除: {sleep_end_dt.strftime('%m/%d %H:%M:%S')}\n"
+                                    f"·スリープ時間: {duration_str}"
                                 )
+                                
+                                # 復帰後20秒間の操作検知ガード時間をセット
+                                wakeup_grace_until = time.time() + 20.0
                                 
                                 is_retrying = False # リretryフラグをOFF
                                 retry_start_time = None
