@@ -91,6 +91,8 @@ def is_hibernate_time(start_hour, end_hour):
     """現在時刻が休止状態（ハイバネート）を適用する時間帯にあるか判定します。"""
     if start_hour is None or end_hour is None:
         return False
+    if start_hour == 0 and end_hour == 0:
+        return False
     
     now = datetime.datetime.now()
     current_hour = now.hour
@@ -100,6 +102,23 @@ def is_hibernate_time(start_hour, end_hour):
         return start_hour <= current_hour < end_hour
     else:
         # 日をまたぐ範囲 (例: 23:00 - 6:00)
+        return current_hour >= start_hour or current_hour < end_hour
+
+def is_no_sleep_time(start_hour, end_hour):
+    """現在時刻が「スリープ禁止（モニター消灯のみ許可）」を適用する時間帯にあるか判定します。"""
+    if start_hour is None or end_hour is None:
+        return False
+    if start_hour == 0 and end_hour == 0:
+        return False
+    
+    now = datetime.datetime.now()
+    current_hour = now.hour
+    
+    if start_hour <= end_hour:
+        # 同一日の範囲 (例: 12:00 - 18:00)
+        return start_hour <= current_hour < end_hour
+    else:
+        # 日をまたぐ範囲 (例: 22:00 - 6:00)
         return current_hour >= start_hour or current_hour < end_hour
 
 def get_computer_name():
@@ -274,6 +293,8 @@ def load_config():
         "standby_after_monitor_off_seconds": 10,
         "hibernate_start_hour": 0,
         "hibernate_end_hour": 0,
+        "no_sleep_start_hour": 0,
+        "no_sleep_end_hour": 0,
         "force_monitor_off_idle_seconds": 900,
         "discord_webhook_url": "",
         "telegram_bot_token": "",
@@ -343,10 +364,19 @@ def main():
         print(f"  ・システムスリープ遅延: {standby_limit} 秒 (モニター消灯後)")
         start_h = config.get("hibernate_start_hour")
         end_h = config.get("hibernate_end_hour")
-        if start_h is not None and end_h is not None:
+        if start_h is not None and end_h is not None and (start_h > 0 or end_h > 0):
             print(f"  ・夜間休止状態の時間帯: {start_h}:00 〜 {end_h}:00 (それ以外はスタンバイ)")
+        else:
+            print("  ・夜間休止状態の時間帯: 無効")
     else:
         print("  ・システムスリープ遅延: 無効 (モニター消灯のみ)")
+        
+    no_sleep_start = config.get("no_sleep_start_hour", 0)
+    no_sleep_end = config.get("no_sleep_end_hour", 0)
+    if no_sleep_start > 0 or no_sleep_end > 0:
+        print(f"  ・スリープ禁止時間帯  : {no_sleep_start}:00 〜 {no_sleep_end}:00 (モニター消灯のみ実行)")
+    else:
+        print("  ・スリープ禁止時間帯  : 無効")
         
     force_off_limit = config.get("force_monitor_off_idle_seconds", 0)
     if force_off_limit > 0:
@@ -508,8 +538,15 @@ def main():
                     # ファイルダウンロード中であるかチェック
                     is_downloading = is_downloading_active(downloads_dir)
                     
+                    # スリープ禁止時間帯（モニター消灯のみ）かチェック
+                    is_no_sleep = is_no_sleep_time(config.get("no_sleep_start_hour"), config.get("no_sleep_end_hour"))
+                    
                     # 【スリープを許可する条件】
-                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading)
+                    # (1) LoRA学習 (pythonでのGPU高負荷) が動いていない
+                    # (2) かつ、通信量が極端に高くない（配信中や超高速ダウンロード中でない）
+                    # (3) かつ、ブラウザによる「ファイルのダウンロード中」ではない
+                    # (4) かつ、「スリープ禁止時間帯」ではない (被った場合は最優先)
+                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep)
                     
                     # 【リretry中の10分継続警告チェック】
                     if is_retrying and retry_start_time is not None and not has_sent_10min_warning:
@@ -648,9 +685,11 @@ def main():
                                 # 通常通りタイマーをリセット（また300秒待つ）
                                 low_net_standby_start_time = None
                     else:
-                        # 通信量上昇、GPU高負荷、またはダウンロード中によるリセット
+                        # 通信量上昇、GPU高負荷、ダウンロード中、またはスリープ禁止時間帯によるリセット
                         if low_net_standby_start_time is not None:
-                            if is_gpu_busy_with_python:
+                            if is_no_sleep:
+                                print(f"\n{get_timestamp()} [情報] スリープ禁止時間帯（{config.get('no_sleep_start_hour')}時〜{config.get('no_sleep_end_hour')}時）のためスリープタイマーをリセットします。")
+                            elif is_gpu_busy_with_python:
                                 print(f"\n{get_timestamp()} [情報] LoRA学習中(python高負荷)を検知したためスリープタイマーをリセットします。GPU: {gpu_util}%")
                             elif is_downloading:
                                 print(f"\n{get_timestamp()} [情報] ファイルダウンロード中を検知したためスリープタイマーをリセットします。")
@@ -658,7 +697,9 @@ def main():
                                 print(f"\n{get_timestamp()} [情報] 高トラフィック(配信または高速DL: {speed:.1f} KB/s)を検知したためスリープタイマーをリセットします。")
                         low_net_standby_start_time = None
                         
-                        if is_gpu_busy_with_python:
+                        if is_no_sleep:
+                            print(f"\r{get_timestamp()} [モニターOFF] スリープ禁止時間帯(モニター消灯のみ維持)... | 通信: {speed:.1f} KB/s  ", end="", flush=True)
+                        elif is_gpu_busy_with_python:
                             print(f"\r{get_timestamp()} [モニターOFF] LoRA学習保護中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}% (python)  ", end="", flush=True)
                         elif is_downloading:
                             print(f"\r{get_timestamp()} [モニターOFF] ファイルダウンロード中... | 通信: {speed:.1f} KB/s  ", end="", flush=True)

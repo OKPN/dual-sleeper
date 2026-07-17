@@ -6,6 +6,8 @@
   "standby_after_monitor_off_seconds": 300,
   "hibernate_start_hour": 0,
   "hibernate_end_hour": 0,
+  "no_sleep_start_hour": 0,
+  "no_sleep_end_hour": 0,
   "force_monitor_off_idle_seconds": 900,
   "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
   "telegram_bot_token": "YOUR_TELEGRAM_BOT_TOKEN_HERE",
