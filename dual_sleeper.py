@@ -153,7 +153,7 @@ def is_downloading_active(downloads_dir):
     return (len(crdownload_files) + len(part_files)) > 0
 
 def send_discord_notification(webhook_url, message):
-    """DiscordのWebhookにメッセージを送信します。"""
+    """Discord of Webhookにメッセージを送信します。"""
     if not webhook_url:
         return
     
@@ -672,8 +672,8 @@ def main():
                                 low_net_standby_start_time = time.time() - (standby_limit - 30)
                             else:
                                 # 15秒以上経って戻ってきた ➔ 本物のスリープ成功＆正常復帰！
-                                # ※復帰直後は「モニター点灯（State 0）」から開始し、20秒放置で即消灯プロセスへ急行させる
-                                print(f"\n{get_timestamp()} [情報] スリープから復帰しました。通常稼働（State 0）から再開します。")
+                                # ※復帰直後は「通信監視状態（State 1）」から開始し、20秒放置で即消灯プロセスへ急行させる
+                                print(f"\n{get_timestamp()} [情報] スリープから復帰しました。通信監視状態（State 1）から再開します。")
                                 turn_on_monitor()
                                 
                                 # スリープの開始、終了時刻、および睡眠実績時間を計算して通知
@@ -697,11 +697,13 @@ def main():
                                     f"·スリープ時間: {duration_str}"
                                 )
                                 
-                                state = 0
-                                # 復帰直後だが、すでに「無操作で100秒間放置されている」と見なすダミー時刻をセット
-                                # これにより、誰も操作しなければ20秒後に自動で State 1 ➔ State 2 (消灯) へ急行します。
-                                last_wakeup_time = time.time() - (config.get("idle_limit_seconds", 120) - 20)
+                                state = 1
+                                # 復帰直後だが、すでに「(設定秒数 - 20秒) 間、低通信が継続している」と見なすダミー時刻をセット
+                                # これにより、誰も操作せず、かつ低通信状態であれば、20秒後に自動的にモニター消灯（State 2）へ移行します。
+                                net_duration = config.get("network_check_duration_seconds", 60)
+                                low_net_start_time = time.time() - (net_duration - 20)
                                 
+                                last_wakeup_time = time.time()
                                 is_retrying = False # リretryフラグをOFF
                                 retry_start_time = None
                                 has_sent_10min_warning = False
