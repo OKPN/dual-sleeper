@@ -5,8 +5,21 @@ import os
 def get_sleep_blocking_requests():
     """WindowsのSYSTEMおよびAWAYMODEセクションから、スリープを妨害している要求を抽出します。"""
     try:
-        output = subprocess.check_output("powercfg -requests", shell=True).decode("utf-8", errors="ignore")
+        # 例外を投げない subprocess.run を使用し、標準エラー出力もキャッチする
+        res = subprocess.run(
+            "powercfg -requests",
+            shell=True,
+            capture_output=True,
+            text=True,
+            errors="ignore"
+        )
         
+        # エラーコードが返ってきた場合は、その詳細エラーを画面に表示
+        if res.returncode != 0:
+            error_msg = res.stderr.strip() if res.stderr.strip() else "詳細不明なエラー"
+            return False, [f"エラー (コード {res.returncode}): {error_msg}\n  ※「管理者として実行」でバッチを起動すると解決する場合があります。"], []
+            
+        output = res.stdout
         lines = output.splitlines()
         system_lines = []
         away_lines = []
@@ -38,7 +51,7 @@ def get_sleep_blocking_requests():
             elif current_section == "AWAYMODE" and line_str:
                 away_lines.append(line_str)
                 
-        # "なし" や 空行、およびセクション見出しのブラケットを除外した、本当の妨害リクエストのリスト
+        # "なし" や 空行、セクション見出しを除外した、本当の妨害リクエストのリスト
         active_system = [l for l in system_lines if l and l != "なし" and l != "None" and not l.startswith("[")]
         active_away = [l for l in away_lines if l and l != "なし" and l != "None" and not l.startswith("[")]
         
@@ -47,7 +60,7 @@ def get_sleep_blocking_requests():
         
         return is_blocked, active_system, active_away
     except Exception as e:
-        return False, [f"エラーが発生しました: {e}"], []
+        return False, [f"プログラム例外が発生しました: {e}"], []
 
 def main():
     # Windows ANSI有効化
