@@ -314,7 +314,7 @@ def main():
         
     force_off_limit = config.get("force_monitor_off_idle_seconds", 0)
     if force_off_limit > 0:
-        print(f"  ・強制モニター消灯    : {force_off_limit} 秒 (無操作継続時、通信の有無を問わず)")
+        print(f"  ・強制モニター消灯    : {force_off_limit} 秒 (無操作継続時, 通信の有無を問わず)")
     else:
         print("  ・強制モニター消灯    : 無効")
         
@@ -355,6 +355,7 @@ def main():
     low_net_standby_start_time = None
     monitor_off_input_time = None
     last_wakeup_time = time.time()
+    is_retrying = False # スリープ失敗時のリretry中フラグ
 
     try:
         while True:
@@ -437,6 +438,7 @@ def main():
                     state = 0
                     last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
                     net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
+                    is_retrying = False # 操作復帰時にリトライフラグをクリア
                     continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
@@ -477,44 +479,49 @@ def main():
                             pc_name = get_computer_name()
                             pending_sec = config.get("sleep_pending_seconds", 30)
                             
-                            print(f"\n{get_timestamp()} [スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。")
-                            
-                            # 通知の送信
-                            send_notifications(
-                                config,
-                                f"🔔 **[{pc_name}]** まもなく {mode_name} に移行します。操作を検知した場合は自動でキャンセルされます。(猶予: {pending_sec}秒)"
-                            )
-                            
-                            # 猶予期間中の割り込み（操作検知）の監視
                             canceled = False
-                            start_pending_time = time.time()
-                            monitor_off_input_time_before = get_last_input_time_raw()
                             
-                            while time.time() - start_pending_time < pending_sec:
-                                current_input = get_last_input_time_raw()
-                                if current_input != monitor_off_input_time_before:
-                                    canceled = True
-                                    break
-                                time.sleep(0.5) # 0.5秒おきに操作チェック
-                                
-                            if canceled:
-                                print(f"\n{get_timestamp()} [キャンセル] 猶予時間中に操作を検知したため、スリープを中止しました。モニターをONに戻します。")
-                                turn_on_monitor()
-                                state = 0
-                                last_wakeup_time = time.time()
-                                net_monitor.get_speed()
+                            # リトライ時ではない場合のみ、スマホへスリープ予告通知と猶予時間の監視を行う
+                            if not is_retrying:
+                                print(f"\n{get_timestamp()} [スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。")
                                 send_notifications(
                                     config,
-                                    f"🟢 **[{pc_name}]** 操作を検知したため、スリープ移行をキャンセルしました。通常稼働に戻ります。"
+                                    f"🔔 **[{pc_name}]** まもなく {mode_name} に移行します。操作を検知した場合は自動でキャンセルされます。(猶予: {pending_sec}秒)"
                                 )
-                                continue
-                            
-                            # スリープを実行
-                            print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
-                            send_notifications(
-                                config,
-                                f"💤 **[{pc_name}]** システムを {mode_name} にしました。おやすみなさい。"
-                            )
+                                
+                                # 猶予期間中の割り込み（操作検知）の監視
+                                start_pending_time = time.time()
+                                monitor_off_input_time_before = get_last_input_time_raw()
+                                
+                                while time.time() - start_pending_time < pending_sec:
+                                    current_input = get_last_input_time_raw()
+                                    if current_input != monitor_off_input_time_before:
+                                        canceled = True
+                                        break
+                                    time.sleep(0.5) # 0.5秒おきに操作チェック
+                                    
+                                if canceled:
+                                    print(f"\n{get_timestamp()} [キャンセル] 猶予時間中に操作を検知したため、スリープを中止しました。モニターをONに戻します。")
+                                    turn_on_monitor()
+                                    state = 0
+                                    last_wakeup_time = time.time()
+                                    net_monitor.get_speed()
+                                    send_notifications(
+                                        config,
+                                        f"🟢 **[{pc_name}]** 操作を検知したため、スリープ移行をキャンセルしました。通常稼働に戻ります。"
+                                    )
+                                    is_retrying = False
+                                    continue
+                                
+                                # 初回実行時のみ、スリープ実行通知を送信
+                                print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
+                                send_notifications(
+                                    config,
+                                    f"💤 **[{pc_name}]** システムを {mode_name} にしました。おやすみなさい。"
+                                )
+                            else:
+                                # リトライ中の場合は、通知は一切送信せず、ローカルコンソールにのみリトライログを出す
+                                print(f"\n{get_timestamp()} [実行] スリープ移行失敗のためリトライを実行します。({mode_name})")
                             
                             # 復帰直後は「消灯状態（State 2）」から開始するように設定
                             state = 2 
@@ -540,11 +547,13 @@ def main():
                             if sleep_duration < 15.0:
                                 # 15秒未満で戻ってきた ➔ スリープ失敗、またはノイズによる即時誤復帰！
                                 print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（または即時誤復帰した）ため、30秒後に再試行します。")
+                                is_retrying = True # リretryフラグをON
                                 # スリープタイマーを「残り30秒」の状態にセットする
                                 low_net_standby_start_time = time.time() - (standby_limit - 30)
                             else:
                                 # 15秒以上経って戻ってきた ➔ 本物の復帰！
                                 print(f"\n{get_timestamp()} [情報] スリープから復帰しました。モニター消灯状態（State 2）から通常通り再開します。")
+                                is_retrying = False # リretryフラグをOFF
                                 # 通常通りタイマーをリセット（また300秒待つ）
                                 low_net_standby_start_time = None
                     else:
