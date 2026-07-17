@@ -64,12 +64,12 @@ def go_to_sleep(hibernate=False):
             res = ctypes.windll.powrprof.SetSuspendState(1, 0, 0)
             # OS側で休止状態が無効化されているなどの理由で失敗した場合(戻り値が0)、通常のスタンバイにフォールバック
             if not res:
-                print("[警告] 休止状態の実行に失敗しました。通常のスタンバイ（スリープ）を実行します。")
+                print(f"{get_timestamp()} [警告] 休止状態の実行に失敗しました。通常のスタンバイ（スリープ）を実行します。")
                 ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
         else:
             ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
     except Exception as e:
-        print(f"電源状態の変更に失敗しました: {e}")
+        print(f"{get_timestamp()} [警告] 電源状態の変更に失敗しました: {e}")
 
 def is_hibernate_time(start_hour, end_hour):
     """現在時刻が休止状態（ハイバネート）を適用する時間帯にあるか判定します。"""
@@ -106,7 +106,7 @@ def send_discord_notification(webhook_url, message):
         with urllib.request.urlopen(req, timeout=5) as response:
             pass
     except Exception as e:
-        print(f"\n[警告] Discord通知の送信に失敗しました: {e}")
+        print(f"\n{get_timestamp()} [警告] Discord通知の送信に失敗しました: {e}")
 
 def get_gpu_status(protect_processes):
     """
@@ -223,6 +223,10 @@ def load_config():
             print(f"設定ファイルの読み込みに失敗しました。デフォルト値を使用します。エラー: {e}")
     return default_config
 
+def get_timestamp():
+    """現在の時刻を [MM/DD HH:MM:SS] フォーマットの文字列で返します。"""
+    return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
+
 def main():
     # Discord Webhook テスト送信のコマンドライン引数判定
     if len(sys.argv) > 1 and sys.argv[1] == "--test-webhook":
@@ -314,7 +318,7 @@ def main():
             # 【共通の割り込み処理】長時間の無操作で強制モニターオフにする判定
             force_off_limit = config.get("force_monitor_off_idle_seconds", 0)
             if state != 2 and force_off_limit > 0 and idle_sec >= force_off_limit:
-                print(f"\n[実行] 長時間の無操作 ({idle_sec:.1f} 秒) を検知したため、通信状態を問わずモニターをオフにします。")
+                print(f"\n{get_timestamp()} [実行] 長時間の無操作 ({idle_sec:.1f} 秒) を検知したため、通信状態を問わずモニターをオフにします。")
                 turn_off_monitor()
                 time.sleep(1.0) # 消灯時のシステムラグやマウスの微振動をやり過ごす
                 state = 2
@@ -325,13 +329,13 @@ def main():
             
             if state == 0:
                 # 【通常状態】
-                print(f"\r[稼働中] 無操作時間: {idle_sec:.1f}/{config['idle_limit_seconds']}秒 | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                print(f"\r{get_timestamp()} [稼働中] 無操作時間: {idle_sec:.1f}/{config['idle_limit_seconds']}秒 | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
                 
                 # 操作がない時間がしきい値を超えたら、通信監視状態に遷移
                 if idle_sec >= config['idle_limit_seconds']:
                     state = 1
                     low_net_start_time = None
-                    print("\n[状態遷移] 無操作時間を超えました。ネットワーク通信量の監視を開始します。")
+                    print(f"\n{get_timestamp()} [状態遷移] 無操作時間を超えました。ネットワーク通信量の監視を開始します。")
 
             elif state == 1:
                 # 【通信監視状態】
@@ -339,7 +343,7 @@ def main():
                 if idle_sec < config['idle_limit_seconds']:
                     state = 0
                     low_net_start_time = None
-                    print("\n[状態遷移] 操作を検知したため、通常監視に戻ります。")
+                    print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
                     continue
                 
                 # 通信速度がしきい値以下か判定
@@ -348,11 +352,11 @@ def main():
                         low_net_start_time = time.time()
                     
                     elapsed_low_net = time.time() - low_net_start_time
-                    print(f"\r[通信監視中] 低通信継続: {elapsed_low_net:.1f}/{config['network_check_duration_seconds']}秒 | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 低通信継続: {elapsed_low_net:.1f}/{config['network_check_duration_seconds']}秒 | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
                     if elapsed_low_net >= config['network_check_duration_seconds']:
-                        print("\n[実行] モニターをオフにします。")
+                        print(f"\n{get_timestamp()} [実行] モニターをオフにします。")
                         turn_off_monitor()
                         time.sleep(1.0) # 消灯時のシステムラグやマウスの微振動をやり過ごす
                         state = 2
@@ -361,16 +365,16 @@ def main():
                 else:
                     # 通信量がしきい値を超えたら計測タイマーをリセット
                     if low_net_start_time is not None:
-                        print(f"\n[情報] 通信量上昇を検知したためタイマーをリセットします。速度: {speed:.1f} KB/s")
+                        print(f"\n{get_timestamp()} [情報] 通信量上昇を検知したためタイマーをリセットします。速度: {speed:.1f} KB/s")
                     low_net_start_time = None
-                    print(f"\r[通信監視中] 通信待機中... | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
 
             elif state == 2:
                 # 【消灯状態】
                 # 1. 最後に操作した時間（TickCount）が変わったかをチェックして復帰判定
                 current_input_time = get_last_input_time_raw()
                 if current_input_time != monitor_off_input_time:
-                    print("\n[復帰] 操作を検知しました。モニターをオンにします。")
+                    print(f"\n{get_timestamp()} [復帰] 操作を検知しました。モニターをオンにします。")
                     turn_on_monitor()
                     state = 0
                     last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
@@ -402,7 +406,7 @@ def main():
                             low_net_standby_start_time = time.time()
                         
                         elapsed_low_net_standby = time.time() - low_net_standby_start_time
-                        print(f"\r[モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
+                        print(f"\r{get_timestamp()} [モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
                         
                         # スリープ監視時間経過でシステムをサスペンド/ハイバネート
                         if elapsed_low_net_standby >= standby_limit:
@@ -415,7 +419,7 @@ def main():
                             pc_name = get_computer_name()
                             pending_sec = config.get("sleep_pending_seconds", 10)
                             
-                            print(f"\n[スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。")
+                            print(f"\n{get_timestamp()} [スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。")
                             
                             # Discord通知の送信
                             webhook_url = config.get("discord_webhook_url", "")
@@ -438,7 +442,7 @@ def main():
                                 time.sleep(0.5) # 0.5秒おきに操作チェック
                                 
                             if canceled:
-                                print("\n[キャンセル] 猶予時間中に操作を検知したため、スリープを中止しました。モニターをONに戻します。")
+                                print(f"\n{get_timestamp()} [キャンセル] 猶予時間中に操作を検知したため、スリープを中止しました。モニターをONに戻します。")
                                 turn_on_monitor()
                                 state = 0
                                 last_wakeup_time = time.time()
@@ -451,7 +455,7 @@ def main():
                                 continue
                             
                             # スリープを実行
-                            print(f"[実行] システムを {mode_name} にします。")
+                            print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
                             if webhook_url:
                                 send_discord_notification(
                                     webhook_url,
@@ -478,17 +482,17 @@ def main():
                         # 通信量上昇またはGPU高負荷によるリセット
                         if low_net_standby_start_time is not None:
                             if is_gpu_busy_with_python:
-                                print(f"\n[情報] LoRA学習中(python高負荷)を検知したためスリープタイマーをリセットします。GPU: {gpu_util}%")
+                                print(f"\n{get_timestamp()} [情報] LoRA学習中(python高負荷)を検知したためスリープタイマーをリセットします。GPU: {gpu_util}%")
                             elif speed >= high_net_limit:
-                                print(f"\n[情報] 高トラフィック(配信または高速DL: {speed:.1f} KB/s)を検知したためスリープタイマーをリセットします。")
+                                print(f"\n{get_timestamp()} [情報] 高トラフィック(配信または高速DL: {speed:.1f} KB/s)を検知したためスリープタイマーをリセットします。")
                         low_net_standby_start_time = None
                         
                         if is_gpu_busy_with_python:
-                            print(f"\r[モニターOFF] LoRA学習保護中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}% (python)  ", end="", flush=True)
+                            print(f"\r{get_timestamp()} [モニターOFF] LoRA学習保護中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}% (python)  ", end="", flush=True)
                         elif speed >= high_net_limit:
-                            print(f"\r[モニターOFF] 配信/高速DL保護中... | 通信: {speed:.1f} KB/s (高トラフィック)  ", end="", flush=True)
+                            print(f"\r{get_timestamp()} [モニターOFF] 配信/高速DL保護中... | 通信: {speed:.1f} KB/s (高トラフィック)  ", end="", flush=True)
                         else:
-                            print(f"\r[モニターOFF] 通信待機中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
+                            print(f"\r{get_timestamp()} [モニターOFF] 通信待機中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
                 else:
                     # スリープ無効時の静か待機
                     pass
