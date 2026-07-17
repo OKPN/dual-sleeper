@@ -153,7 +153,7 @@ def is_downloading_active(downloads_dir):
     return (len(crdownload_files) + len(part_files)) > 0
 
 def send_discord_notification(webhook_url, message):
-    """Discord of Webhookにメッセージを送信します。"""
+    """DiscordのWebhookにメッセージを送信します。"""
     if not webhook_url:
         return
     
@@ -308,6 +308,8 @@ def load_config():
         "telegram_chat_id": "",
         "sleep_pending_seconds": 30,
         "wakeup_mouse_distance_px": 100,
+        "wakeup_mouse_grace_seconds": 20,
+        "wakeup_active_threshold_seconds": 5,
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0
@@ -417,6 +419,10 @@ def main():
     # モニター復帰マウス移動距離しきい値の出力
     print(f"  ・モニター復帰マウス距離: {config.get('wakeup_mouse_distance_px', 100)} px (大きく動かした時のみ復帰)")
     
+    # 復帰後の設定出力
+    print(f"  ・復帰後判定猶予時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (OSノイズ回避用)")
+    print(f"  ・復帰判断アクティブ値: {config.get('wakeup_active_threshold_seconds', 5)} 秒 (猶予終了時の判定しきい値)")
+    
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
@@ -443,6 +449,11 @@ def main():
     
     # マウス座標記録用
     last_mouse_x, last_mouse_y = 0, 0
+    
+    # スリープ復帰後の猶予タイマー関連
+    wakeup_grace_until = 0
+    user_active_during_grace = False
+    wakeup_mouse_x, wakeup_mouse_y = 0, 0
 
     try:
         while True:
@@ -486,18 +497,60 @@ def main():
 
             elif state == 1:
                 # 【通信監視状態】
-                # 監視中にユーザーが操作を再開したら通常状態に戻る
-                if idle_sec < config['idle_limit_seconds']:
-                    state = 0
-                    low_net_start_time = None
-                    print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
-                    continue
+                # スリープ復帰直後の猶予期間中か判定
+                is_grace_period = (time.time() < wakeup_grace_until)
+                
+                if is_grace_period:
+                    # 猶予期間中：ユーザーが本当に手でマウスを動かしたかを追跡
+                    curr_x, curr_y = get_mouse_position()
+                    dx = abs(curr_x - wakeup_mouse_x)
+                    dy = abs(curr_y - wakeup_mouse_y)
+                    limit_px = config.get("wakeup_mouse_distance_px", 100)
+                    
+                    if dx >= limit_px or dy >= limit_px:
+                        # 猶予期間中に「100px以上の本物の移動」を一度でも検知したらフラグON
+                        user_active_during_grace = True
+                        
+                    print(f"\r{get_timestamp()} [復帰猶予中] 残り猶予: {int(wakeup_grace_until - time.time())}秒 | 操作検知: {'あり' if user_active_during_grace else 'なし'}  ", end="", flush=True)
+                else:
+                    # 猶予期間が終了した瞬間（または通常の遷移フェーズ）の分岐処理
+                    if wakeup_grace_until > 0:
+                        wakeup_grace_until = 0 # 1回だけ判定を実行するためにクリア
+                        
+                        # 判定基準:
+                        # (a) 20秒の猶予期間内に、一度でも100px以上の意図的なマウス移動があったか
+                        # (b) または、猶予終了時の直近の無操作時間がしきい値（デフォルト5秒）未満であるか
+                        # ※これにより、0秒時点のスリープ解除ノイズをスルーしつつ、猶予中の本物の操作を確実に拾います。
+                        threshold_sec = config.get("wakeup_active_threshold_seconds", 5)
+                        is_real_user_active = user_active_during_grace or (idle_sec < threshold_sec)
+                        
+                        if is_real_user_active:
+                            print(f"\n{get_timestamp()} [状態遷移] 復帰猶予中に本物の操作を検知したため、通常監視（State 0）へ移行します。")
+                            state = 0
+                            last_wakeup_time = time.time()
+                            net_monitor.get_speed()
+                            continue
+                        else:
+                            print(f"\n{get_timestamp()} [状態遷移] 復帰猶予中に操作ノイズ以外は検知されなかったため、モニターを消灯して消灯状態（State 2）へ移行します。")
+                            turn_off_monitor()
+                            time.sleep(1.0)
+                            state = 2
+                            monitor_off_input_time = get_last_input_time_raw()
+                            last_mouse_x, last_mouse_y = get_mouse_position()
+                            low_net_standby_start_time = None
+                            continue
+
+                    # 通常のState 1：監視中にユーザーが操作を再開したら通常状態に戻る
+                    if idle_sec < config['idle_limit_seconds']:
+                        state = 0
+                        low_net_start_time = None
+                        print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
+                        continue
                 
                 # ファイルダウンロード中であるかチェック
                 is_downloading = is_downloading_active(downloads_dir)
                 
                 # 通信速度がしきい値以下、または「ブラウザがファイルダウンロード中」の場合
-                # （ダウンロード中は、大容量通信があっても、モニター消灯[State 2]への移行を妨げない＝画面を消す）
                 if speed <= config['network_limit_kbs'] or is_downloading:
                     if low_net_start_time is None:
                         low_net_start_time = time.time()
@@ -672,7 +725,7 @@ def main():
                                 low_net_standby_start_time = time.time() - (standby_limit - 30)
                             else:
                                 # 15秒以上経って戻ってきた ➔ 本物のスリープ成功＆正常復帰！
-                                # ※復帰直後は「通信監視状態（State 1）」から開始し、20秒放置で即消灯プロセスへ急行させる
+                                # ※復帰直後は「通信監視状態（State 1）」から開始し、指定秒数監視後に分岐させる
                                 print(f"\n{get_timestamp()} [情報] スリープから復帰しました。通信監視状態（State 1）から再開します。")
                                 turn_on_monitor()
                                 
@@ -698,16 +751,17 @@ def main():
                                 )
                                 
                                 state = 1
-                                # 復帰直後だが、すでに「(設定秒数 - 20秒) 間、低通信が継続している」と見なすダミー時刻をセット
-                                # これにより、誰も操作せず、かつ低通信状態であれば、20秒後に自動的にモニター消灯（State 2）へ移行します。
-                                net_duration = config.get("network_check_duration_seconds", 60)
-                                low_net_start_time = time.time() - (net_duration - 20)
+                                # 復帰猶予ガード時間の設定
+                                grace_sec = config.get("wakeup_mouse_grace_seconds", 20)
+                                wakeup_grace_until = time.time() + grace_sec
+                                user_active_during_grace = False
+                                wakeup_mouse_x, wakeup_mouse_y = get_mouse_position()
                                 
                                 last_wakeup_time = time.time()
                                 is_retrying = False # リretryフラグをOFF
                                 retry_start_time = None
                                 has_sent_10min_warning = False
-                                # 通常通りタイマーをリセット（また300秒待つ）
+                                # 通常通りタイマーをリセット
                                 low_net_standby_start_time = None
                     else:
                         # 通信量上昇、GPU高負荷、ダウンロード中、またはスリープ禁止時間帯によるリセット
