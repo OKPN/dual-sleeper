@@ -10,6 +10,7 @@ import urllib.error
 import subprocess
 import psutil
 import glob
+import msvcrt
 
 # Windows API 定義
 class LASTINPUTINFO(ctypes.Structure):
@@ -445,6 +446,8 @@ def main():
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
     print("=" * 60)
+    print("【キーボード操作】 s:次回強制スタンバイ | h:次回強制ハイバネート | c:予約解除")
+    print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
 
     net_monitor = NetworkMonitor()
@@ -472,9 +475,33 @@ def main():
     wakeup_grace_until = 0
     user_active_during_grace = False
     wakeup_mouse_x, wakeup_mouse_y = 0, 0
+    
+    # 強制電源モード制御用変数 ("sleep", "hibernate", None)
+    force_power_mode = None
 
     try:
         while True:
+            # 常に非同期でキーボード入力をチェック (msvcrtを使用し、ブロッキングを回避)
+            while msvcrt.kbhit():
+                try:
+                    char_code = msvcrt.getch()
+                    # 特殊キー(矢印キーなど)は0x00や0xe0が先頭に入るのでデコードエラーを回避
+                    if char_code in (b'\x00', b'\xe0'):
+                        msvcrt.getch() # 特殊キーの2バイト目を空読みして捨てる
+                        continue
+                    ch = char_code.decode("utf-8").lower()
+                    if ch == "s":
+                        force_power_mode = "sleep"
+                        print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「スタンバイ (スリープ)」を実行します。(復帰時にリセット)")
+                    elif ch == "h":
+                        force_power_mode = "hibernate"
+                        print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「休止状態 (ハイバネート)」を実行します。(復帰時にリセット)")
+                    elif ch == "c":
+                        force_power_mode = None
+                        print(f"\n{get_timestamp()} [手動予約] 予約された電源モードを解除しました。(通常設定の時間帯制御に戻ります)")
+                except Exception:
+                    pass
+
             # 常にネットワーク速度を更新しておく（正確な差分計測のため）
             speed = net_monitor.get_speed()
             
@@ -505,7 +532,8 @@ def main():
             
             if state == 0:
                 # 【通常状態】
-                print(f"\r{get_timestamp()} [稼働中] 無操作時間: {idle_sec:.1f}/{config['idle_limit_seconds']}秒 | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                mode_status = f" | 予約: {force_power_mode.upper() if force_power_mode else 'なし'}"
+                print(f"\r{get_timestamp()} [稼働中] 無操作時間: {idle_sec:.1f}/{config['idle_limit_seconds']}秒 | 通信速度: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
                 
                 # 操作がない時間がしきい値を超えたら、通信監視状態に遷移
                 if idle_sec >= config['idle_limit_seconds']:
@@ -538,7 +566,6 @@ def main():
                         # 判定基準:
                         # (a) 20秒の猶予期間内に、一度でも100px以上の意図的なマウス移動があったか
                         # (b) または、猶予終了時の直近の無操作時間がしきい値（デフォルト5秒）未満であるか
-                        # ※これにより、0秒時点のスリープ解除ノイズをスルーしつつ、猶予中の本物の操作を確実に拾います。
                         threshold_sec = config.get("wakeup_active_threshold_seconds", 5)
                         is_real_user_active = user_active_during_grace or (idle_sec < threshold_sec)
                         
@@ -547,6 +574,8 @@ def main():
                             state = 0
                             last_wakeup_time = time.time()
                             net_monitor.get_speed()
+                            # ユーザーが明示的に操作したため、一時予約は解除する
+                            force_power_mode = None
                             continue
                         else:
                             print(f"\n{get_timestamp()} [状態遷移] 復帰猶予中に操作ノイズ以外は検知されなかったため、モニターを消灯して消灯状態（State 2）へ移行します。")
@@ -610,6 +639,7 @@ def main():
                     is_retrying = False # 操作復帰時にリトライフラグをクリア
                     retry_start_time = None
                     has_sent_10min_warning = False
+                    force_power_mode = None # 操作復帰時は手動予約をクリアする
                     continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
@@ -651,14 +681,27 @@ def main():
                             low_net_standby_start_time = time.time()
                         
                         elapsed_low_net_standby = time.time() - low_net_standby_start_time
-                        print(f"\r{get_timestamp()} [モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
+                        print(f"\r{get_timestamp()} [モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", fill=True if force_power_mode else False)
+                        # printの整形用にダミーで出力を整える
+                        if force_power_mode:
+                            print(f" (予約適用: {force_power_mode.upper()})", end="", flush=True)
+                        else:
+                            print("", end="", flush=True)
                         
                         # スリープ監視時間経過でシステムをサスペンド/ハイバネート
                         if elapsed_low_net_standby >= standby_limit:
-                            # スリープか休止状態かの時間判定
-                            start_h = config.get("hibernate_start_hour")
-                            end_h = config.get("hibernate_end_hour")
-                            use_hibernate = is_hibernate_time(start_h, end_h)
+                            # スリープか休止状態かの最終判定
+                            if force_power_mode == "hibernate":
+                                use_hibernate = True
+                                mode_desc = "手動予約「休止状態 (ハイバネート)」"
+                            elif force_power_mode == "sleep":
+                                use_hibernate = False
+                                mode_desc = "手動予約「スタンバイ (スリープ)」"
+                            else:
+                                start_h = config.get("hibernate_start_hour")
+                                end_h = config.get("hibernate_end_hour")
+                                use_hibernate = is_hibernate_time(start_h, end_h)
+                                mode_desc = "時間帯設定に従い、「休止状態」" if use_hibernate else "時間帯設定に従い、「スタンバイ」"
                             
                             mode_name = "休止状態 (ハイバネート)" if use_hibernate else "スタンバイ (スリープ)"
                             pc_name = get_computer_name()
@@ -668,10 +711,10 @@ def main():
                             
                             # リトライ時ではない場合のみ、スマホへスリープ予告通知と猶予時間の監視を行う
                             if not is_retrying:
-                                print(f"\n{get_timestamp()} [スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。")
+                                print(f"\n{get_timestamp()} [スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。({mode_desc})")
                                 send_notifications(
                                     config,
-                                    f"🔔 **[{pc_name}]** まもなく {mode_name} に移行します。操作を検知した場合は自動でキャンセルされます。(猶予: {pending_sec}秒)"
+                                    f"🔔 **[{pc_name}]** まもなく {mode_name} に移行します。({mode_desc})\n操作を検知した場合は自動でキャンセルされます。(猶予: {pending_sec}秒)"
                                 )
                                 
                                 # 猶予期間中の割り込み（操作検知）の監視
@@ -698,6 +741,7 @@ def main():
                                     is_retrying = False
                                     retry_start_time = None
                                     has_sent_10min_warning = False
+                                    force_power_mode = None # 一時予約を解除
                                     continue
                             
                             print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
@@ -781,6 +825,9 @@ def main():
                                 has_sent_10min_warning = False
                                 # 通常通りタイマーをリセット
                                 low_net_standby_start_time = None
+                                
+                                # 復帰成功時に手動予約を自動クリア
+                                force_power_mode = None
                     else:
                         # 通信量上昇、GPU高負荷、ダウンロード中、またはスリープ禁止時間帯によるリセット
                         if low_net_standby_start_time is not None:
