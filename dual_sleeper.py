@@ -11,6 +11,7 @@ import subprocess
 import psutil
 import glob
 import msvcrt
+import threading
 
 # Windows API 定義
 class LASTINPUTINFO(ctypes.Structure):
@@ -37,6 +38,14 @@ FOLDERID_Downloads = GUID(
 HWND_BROADCAST = 0xFFFF
 WM_SYSCOMMAND = 0x0112
 SC_MONITORPOWER = 0xF170
+
+# グローバルステータス変数 (Telegramリモートスレッド共有用)
+force_power_mode = None
+current_state_num = 0
+current_idle_sec = 0.0
+current_net_speed = 0.0
+current_gpu_util = 0
+telegram_offset = 0
 
 def get_idle_duration():
     """最後にマウス・キーボード操作があってからの経過時間（秒）を取得します。"""
@@ -348,7 +357,104 @@ def get_timestamp():
     """現在の時刻を [MM/DD HH:MM:SS] フォーマットの文字列で返します。"""
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
 
+def telegram_worker(bot_token, chat_id, pc_name):
+    """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
+    global force_power_mode, telegram_offset
+    global current_state_num, current_idle_sec, current_net_speed, current_gpu_util
+    
+    if not bot_token or not chat_id:
+        return
+        
+    print(f"{get_timestamp()} [システム] Telegramリモート受信スレッドを起動しました。(ロングポーリング監視)")
+    
+    # 起動時の古い過去ログを処理しないよう、最新のupdate_idを取得してoffsetを初期化
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"limit": 1, "timeout": 0}).encode("utf-8"),
+            headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            if res_data.get("ok") and res_data.get("result"):
+                telegram_offset = res_data["result"][-1]["update_id"] + 1
+    except Exception:
+        pass
+
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+            payload = {
+                "offset": telegram_offset,
+                "timeout": 30, # 30秒間Telegramサーバー側で接続を維持（ロングポーリング）
+                "allowed_updates": ["message"]
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
+            )
+            # タイムアウトは接続維持時間(30秒)より少し長めの40秒を設定
+            with urllib.request.urlopen(req, timeout=40) as response:
+                res_data = json.loads(response.read().decode("utf-8"))
+                if not res_data.get("ok"):
+                    time.sleep(5)
+                    continue
+                    
+                for update in res_data.get("result", []):
+                    telegram_offset = update["update_id"] + 1
+                    message = update.get("message")
+                    if not message:
+                        continue
+                        
+                    # セキュリティ：登録されたあなたのChat IDからのメッセージのみ処理する
+                    sender_chat_id = str(message.get("chat", {}).get("id", ""))
+                    if sender_chat_id != str(chat_id):
+                        continue
+                        
+                    text = message.get("text", "").strip().lower()
+                    if not text:
+                        continue
+                        
+                    # コマンド解析
+                    reply_text = ""
+                    if text in ("/sleep", "sleep"):
+                        force_power_mode = "sleep"
+                        reply_text = f"🟢 **[{pc_name}]** 次回終了モードを強制的に「スタンバイ (スリープ)」に予約しました。(復帰時に解除)"
+                        print(f"\n{get_timestamp()} [リモート予約] Telegramから「スタンバイ (スリープ)」の強制予約を受信しました。")
+                    elif text in ("/hibernate", "hibernate"):
+                        force_power_mode = "hibernate"
+                        reply_text = f"🟢 **[{pc_name}]** 次回終了モードを強制的に「休止状態 (ハイバネート)」に予約しました。(復帰時に解除)"
+                        print(f"\n{get_timestamp()} [リモート予約] Telegramから「休止状態 (ハイバネート)」の強制予約を受信しました。")
+                    elif text in ("/cancel", "cancel"):
+                        force_power_mode = None
+                        reply_text = f"🟢 **[{pc_name}]** 電源予約をキャンセルしました。(通常の時間帯制御に戻ります)"
+                        print(f"\n{get_timestamp()} [リモート予約] Telegramから予約キャンセルを受信しました。")
+                    elif text in ("/status", "status"):
+                        state_names = {0: "通常状態 (State 0)", 1: "通信監視中 (State 1)", 2: "消灯中 (State 2)"}
+                        state_str = state_names.get(current_state_num, "不明")
+                        mode_str = force_power_mode.upper() if force_power_mode else "なし (通常時間帯制御)"
+                        reply_text = (
+                            f"📊 **[{pc_name}] 現在のステータス**\n"
+                            f"·状態: {state_str}\n"
+                            f"·無操作時間: {current_idle_sec:.1f} 秒\n"
+                            f"·通信速度: {current_net_speed:.1f} KB/s\n"
+                            f"·GPU使用率: {current_gpu_util} %\n"
+                            f"·手動予約: {mode_str}"
+                        )
+                        
+                    if reply_text:
+                        send_telegram_notification(bot_token, chat_id, reply_text)
+                        
+        except Exception as e:
+            # ネット切断等の一時的な例外は、ログを汚さないためスルーして5秒後に再試行
+            time.sleep(5)
+
 def main():
+    global force_power_mode
+    global current_state_num, current_idle_sec, current_net_speed, current_gpu_util
+
     # 簡易編集モードを無効化
     disable_quick_edit()
 
@@ -447,8 +553,19 @@ def main():
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
     print("=" * 60)
     print("【キーボード操作】 s:次回強制スタンバイ | h:次回強制ハイバネート | c:予約解除")
+    print("【リモート操作】   Telegram Bot から /sleep, /hibernate, /cancel, /status が利用可能")
     print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
+
+    # Telegram受信バックグラウンドスレッドの起動
+    pc_name = get_computer_name()
+    if tg_token and tg_chat:
+        tg_thread = threading.Thread(
+            target=telegram_worker, 
+            args=(tg_token, tg_chat, pc_name), 
+            daemon=True
+        )
+        tg_thread.start()
 
     net_monitor = NetworkMonitor()
     
@@ -475,19 +592,15 @@ def main():
     wakeup_grace_until = 0
     user_active_during_grace = False
     wakeup_mouse_x, wakeup_mouse_y = 0, 0
-    
-    # 強制電源モード制御用変数 ("sleep", "hibernate", None)
-    force_power_mode = None
 
     try:
         while True:
-            # 常に非同期でキーボード入力をチェック (msvcrtを使用し、ブロッキングを回避)
+            # 常に非同期でローカルのキーボード入力をチェック
             while msvcrt.kbhit():
                 try:
                     char_code = msvcrt.getch()
-                    # 特殊キー(矢印キーなど)は0x00や0xe0が先頭に入るのでデコードエラーを回避
                     if char_code in (b'\x00', b'\xe0'):
-                        msvcrt.getch() # 特殊キーの2バイト目を空読みして捨てる
+                        msvcrt.getch()
                         continue
                     ch = char_code.decode("utf-8").lower()
                     if ch == "s":
@@ -516,6 +629,15 @@ def main():
             
             # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
             config = load_config()
+            
+            # グローバルステータスの更新（Telegramスレッドへのリアルタイム情報共有用）
+            current_state_num = state
+            current_idle_sec = idle_sec
+            current_net_speed = speed
+            gpu_limit = config.get("gpu_limit_percent", 0)
+            gpu_procs = config.get("gpu_protect_processes", [])
+            gpu_util, gpu_protect_active = get_gpu_status(gpu_procs)
+            current_gpu_util = gpu_util
             
             # 【共通の割り込み処理】長時間の無操作で強制モニターオフにする判定
             force_off_limit = config.get("force_monitor_off_idle_seconds", 0)
@@ -645,15 +767,7 @@ def main():
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 standby_limit = config.get("standby_after_monitor_off_seconds", 0)
                 if standby_limit > 0:
-                    # GPUの状態を取得
-                    gpu_limit = config.get("gpu_limit_percent", 0)
-                    gpu_procs = config.get("gpu_protect_processes", [])
-                    gpu_util, gpu_protect_active = get_gpu_status(gpu_procs)
-                    
-                    # GPUによる保護が有効かつ、高負荷で対象プロセスが動作中であるか判定 (LoRA学習中)
-                    is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
-                    
-                    # 高トラフィック（配信など）のしきい値を取得 (デフォルト: 625.0 KB/s = 5 Mbps)
+                    # 高トラフィック（配信など）のしきい値を取得
                     high_net_limit = config.get("high_network_limit_kbs", 625.0)
                     
                     # ファイルダウンロード中であるかチェック
@@ -663,15 +777,17 @@ def main():
                     is_no_sleep = is_no_sleep_time(config.get("no_sleep_start_hour"), config.get("no_sleep_end_hour"))
                     
                     # 【スリープを許可する条件】
+                    # ※GPUは前段で測定した値をそのまま流用
+                    is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
                     allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep)
                     
                     # 【リretry中の10分継続警告チェック】
                     if is_retrying and retry_start_time is not None and not has_sent_10min_warning:
                         elapsed_retry = time.time() - retry_start_time
-                        if elapsed_retry >= 600.0:  # 10分 (600秒)
+                        if elapsed_retry >= 600.0:  # 10分
                             send_notifications(
                                 config,
-                                f"⚠️ **[{pc_name}]** スリープのリトライが10分以上継続しています。Windows Updateや他の常駐アプリ（DontSleep等）によってスリープが阻害されている可能性があります。気になる場合は「スリープ禁止信号チェッカー」を管理者権限で実行して原因を確認してください。"
+                                f"⚠️ **[{pc_name}]** スリープのリトライが10分以上継続しています。Windows Updateや他の常駐アプリ（DontSleep等）によってスリープが阻害されている可能性があります。"
                             )
                             has_sent_10min_warning = True
                             print(f"\n{get_timestamp()} [警告] リトライが10分継続したため、警告通知を送信しました。")
@@ -681,16 +797,15 @@ def main():
                             low_net_standby_start_time = time.time()
                         
                         elapsed_low_net_standby = time.time() - low_net_standby_start_time
-                        print(f"\r{get_timestamp()} [モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", fill=True if force_power_mode else False)
-                        # printの整形用にダミーで出力を整える
+                        print(f"\r{get_timestamp()} [モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
+                        
+                        # スリープ状態での終了時、予約ログを出力
                         if force_power_mode:
                             print(f" (予約適用: {force_power_mode.upper()})", end="", flush=True)
-                        else:
-                            print("", end="", flush=True)
                         
                         # スリープ監視時間経過でシステムをサスペンド/ハイバネート
                         if elapsed_low_net_standby >= standby_limit:
-                            # スリープか休止状態かの最終判定
+                            # スリープか休止状態かの最終決定
                             if force_power_mode == "hibernate":
                                 use_hibernate = True
                                 mode_desc = "手動予約「休止状態 (ハイバネート)」"
@@ -704,7 +819,6 @@ def main():
                                 mode_desc = "時間帯設定に従い、「休止状態」" if use_hibernate else "時間帯設定に従い、「スタンバイ」"
                             
                             mode_name = "休止状態 (ハイバネート)" if use_hibernate else "スタンバイ (スリープ)"
-                            pc_name = get_computer_name()
                             pending_sec = config.get("sleep_pending_seconds", 30)
                             
                             canceled = False
