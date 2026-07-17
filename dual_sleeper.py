@@ -307,6 +307,7 @@ def load_config():
         "telegram_bot_token": "",
         "telegram_chat_id": "",
         "sleep_pending_seconds": 30,
+        "wakeup_mouse_distance_px": 100,
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0
@@ -326,7 +327,7 @@ def load_config():
     return default_config
 
 def get_timestamp():
-    """現在の時刻を [MM/DD HH:MM:SS] フォーマットの文字列で返します。"""
+    """現在の時刻を [MM/DD HH:MM:SS] フォーマット of 文字列で返します。"""
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
 
 def main():
@@ -413,6 +414,9 @@ def main():
     else:
         print("  ・外部通知サービス    : 無効 (通知先URL・ID未設定)")
         
+    # モニター復帰マウス移動距離しきい値の出力
+    print(f"  ・モニター復帰マウス距離: {config.get('wakeup_mouse_distance_px', 100)} px (大きく動かした時のみ復帰)")
+    
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
@@ -520,12 +524,15 @@ def main():
 
             elif state == 2:
                 # 【消灯状態】
-                # 1. マウスが大きく動かされたか（20px以上）だけで復帰判定を行う（キー入力やマウスクリックは除外）
+                # 1. マウスが大きく動かされたか（指定ピクセル以上）だけで復帰判定を行う（キー入力やクリックは除外）
                 curr_x, curr_y = get_mouse_position()
                 dx = abs(curr_x - last_mouse_x)
                 dy = abs(curr_y - last_mouse_y)
                 
-                if dx >= 20 or dy >= 20:
+                # 設定ファイルからしきい値を取得（デフォルトは100px）
+                limit_px = config.get("wakeup_mouse_distance_px", 100)
+                
+                if dx >= limit_px or dy >= limit_px:
                     print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。モニターをオンにします。")
                     turn_on_monitor()
                     state = 0
