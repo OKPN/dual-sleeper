@@ -394,7 +394,11 @@ def main():
     low_net_standby_start_time = None
     monitor_off_input_time = None
     last_wakeup_time = time.time()
+    
+    # リトライ制御用変数
     is_retrying = False # スリープ失敗時のリretry中フラグ
+    retry_start_time = None # リretry開始の物理時刻
+    has_sent_10min_warning = False # 10分経過警告の送信済みフラグ
 
     try:
         while True:
@@ -483,6 +487,8 @@ def main():
                     last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
                     net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
                     is_retrying = False # 操作復帰時にリトライフラグをクリア
+                    retry_start_time = None
+                    has_sent_10min_warning = False
                     continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
@@ -504,6 +510,17 @@ def main():
                     
                     # 【スリープを許可する条件】
                     allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading)
+                    
+                    # 【リretry中の10分継続警告チェック】
+                    if is_retrying and retry_start_time is not None and not has_sent_10min_warning:
+                        elapsed_retry = time.time() - retry_start_time
+                        if elapsed_retry >= 600.0:  # 10分 (600秒)
+                            send_notifications(
+                                config,
+                                f"⚠️ **[{pc_name}]** スリープのリトライが10分以上継続しています。Windows Updateや他の常駐アプリ（DontSleep等）によってスリープが阻害されている可能性があります。気になる場合は「スリープ禁止信号チェッカー」を管理者権限で実行して原因を確認してください。"
+                            )
+                            has_sent_10min_warning = True
+                            print(f"\n{get_timestamp()} [警告] リトライが10分継続したため、警告通知を送信しました。")
                     
                     if allow_sleep:
                         if low_net_standby_start_time is None:
@@ -555,10 +572,10 @@ def main():
                                         f"🟢 **[{pc_name}]** 操作を検知したため、スリープ移行をキャンセルしました。通常稼働に戻ります。"
                                     )
                                     is_retrying = False
+                                    retry_start_time = None
+                                    has_sent_10min_warning = False
                                     continue
                             
-                            # ※ 成否がまだ確定していないため、スリープ実行時の「💤システムをスリープにしました」通知は送信しません。
-                            # （スリープ成功の有無は、後から目覚めた瞬間に「復帰通知」として確定した実績をスマホへ送信します）
                             print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
                             
                             # 復帰直後は「消灯状態（State 2）」から開始するように設定
@@ -593,6 +610,9 @@ def main():
                                         config,
                                         f"⚠️ **[{pc_name}]** スリープの移行に失敗したため、成功するまで30秒おきにリトライ処理に入ります。"
                                     )
+                                    # リトライ開始時刻をセット
+                                    retry_start_time = time.time()
+                                    has_sent_10min_warning = False
                                     
                                 is_retrying = True # リretryフラグをON
                                 # スリープタイマーを「残り30秒」の状態にセットする
@@ -623,6 +643,8 @@ def main():
                                 )
                                 
                                 is_retrying = False # リretryフラグをOFF
+                                retry_start_time = None
+                                has_sent_10min_warning = False
                                 # 通常通りタイマーをリセット（また300秒待つ）
                                 low_net_standby_start_time = None
                     else:
