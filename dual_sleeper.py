@@ -9,6 +9,7 @@ import urllib.request
 import urllib.error
 import subprocess
 import psutil
+import glob
 
 # Windows API 定義
 class LASTINPUTINFO(ctypes.Structure):
@@ -16,6 +17,21 @@ class LASTINPUTINFO(ctypes.Structure):
 
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+# GUIDの定義 (Downloadsフォルダの自動取得用)
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_ulong),
+        ("Data2", ctypes.c_ushort),
+        ("Data3", ctypes.c_ushort),
+        ("Data4", ctypes.c_ubyte * 8)
+    ]
+
+# FOLDERID_Downloads の GUID ({374DE290-123F-4565-9164-39C4925E467B})
+FOLDERID_Downloads = GUID(
+    0x374DE290, 0x123F, 0x4565,
+    (ctypes.c_ubyte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B)
+)
 
 HWND_BROADCAST = 0xFFFF
 WM_SYSCOMMAND = 0x0112
@@ -90,6 +106,26 @@ def get_computer_name():
     """PC名を取得します。"""
     return socket.gethostname()
 
+def get_downloads_folder():
+    """Windows APIから、現在のDownloadsフォルダの絶対パスを取得します。"""
+    buf = ctypes.c_wchar_p()
+    res = ctypes.windll.shell32.SHGetKnownFolderPath(
+        ctypes.byref(FOLDERID_Downloads), 0, None, ctypes.byref(buf)
+    )
+    if res == 0:
+        path = buf.value
+        ctypes.windll.ole32.CoTaskMemFree(buf)
+        return path
+    return os.path.join(os.path.expanduser("~"), "Downloads")
+
+def is_downloading_active(downloads_dir):
+    """ダウンロードフォルダ内にブラウザの一時ファイルが存在するかチェックします。"""
+    if not downloads_dir or not os.path.exists(downloads_dir):
+        return False
+    crdownload_files = glob.glob(os.path.join(downloads_dir, "*.crdownload"))
+    part_files = glob.glob(os.path.join(downloads_dir, "*.part"))
+    return (len(crdownload_files) + len(part_files)) > 0
+
 def send_discord_notification(webhook_url, message):
     """DiscordのWebhookにメッセージを送信します。"""
     if not webhook_url:
@@ -146,7 +182,7 @@ def send_notifications(config, message):
 
 def get_gpu_status(protect_processes):
     """
-    NVIDIA GPUの使用率(%) and、現在GPUを使用している保護対象プロセスの有無を判定します。
+    NVIDIA GPUの使用率(%) と、現在GPUを使用している保護対象プロセスの有無を判定します。
     戻り値: (gpu_utilization_percent, is_protect_process_active)
     """
     gpu_util = 0
@@ -340,6 +376,9 @@ def main():
     else:
         print("  ・外部通知サービス    : 無効 (通知先URL・ID未設定)")
         
+    # ダウンロードフォルダの自動取得
+    downloads_dir = get_downloads_folder()
+    print(f"  ・ダウンロードフォルダ: {downloads_dir}")
     print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
 
@@ -405,13 +444,18 @@ def main():
                     print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
                     continue
                 
-                # 通信速度がしきい値以下か判定
-                if speed <= config['network_limit_kbs']:
+                # ファイルダウンロード中であるかチェック
+                is_downloading = is_downloading_active(downloads_dir)
+                
+                # 通信速度がしきい値以下、または「ブラウザがファイルダウンロード中」の場合
+                # （ダウンロード中は、大容量通信があっても、モニター消灯[State 2]への移行を妨げない＝画面を消す）
+                if speed <= config['network_limit_kbs'] or is_downloading:
                     if low_net_start_time is None:
                         low_net_start_time = time.time()
                     
                     elapsed_low_net = time.time() - low_net_start_time
-                    print(f"\r{get_timestamp()} [通信監視中] 低通信継続: {elapsed_low_net:.1f}/{config['network_check_duration_seconds']}秒 | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                    dl_status = " (ダウンロード検出中)" if is_downloading else ""
+                    print(f"\r{get_timestamp()} [通信監視中] 低通信継続: {elapsed_low_net:.1f}/{config['network_check_duration_seconds']}秒 | 通信速度: {speed:.1f} KB/s{dl_status}  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
                     if elapsed_low_net >= config['network_check_duration_seconds']:
@@ -455,11 +499,14 @@ def main():
                     # 高トラフィック（配信など）のしきい値を取得 (デフォルト: 625.0 KB/s = 5 Mbps)
                     high_net_limit = config.get("high_network_limit_kbs", 625.0)
                     
-                    # 【スリープを許可する条件（論理式の最適化）】
+                    # ファイルダウンロード中であるかチェック
+                    is_downloading = is_downloading_active(downloads_dir)
+                    
+                    # 【スリープを許可する条件】
                     # (1) LoRA学習 (pythonでのGPU高負荷) が動いていない
-                    # (2) かつ、通信量が極端に高くない（配信中や超高速ダウンロード中でない：high_net_limit未満）
-                    # ※通信がhigh_net_limit未満で、かつpythonで忙しくなければ、たとえゲーム(python以外)がGPUを消費していてもスリープを許可します。
-                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit)
+                    # (2) かつ、通信量が極端に高くない（配信中や超高速ダウンロード中でない）
+                    # (3) かつ、ブラウザによる「ファイルのダウンロード中」ではない（一時ファイルがない）
+                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading)
                     
                     if allow_sleep:
                         if low_net_standby_start_time is None:
@@ -514,7 +561,6 @@ def main():
                                     continue
                             
                             # スリープ実行通知の送信
-                            # ※リトライ中であっても「スリープに入ること（💤）」の実行通知だけはスマホへ送信する（都度の30秒予告やエラーはミュート）
                             print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
                             send_notifications(
                                 config,
@@ -546,7 +592,7 @@ def main():
                                 # 15秒未満で戻ってきた ➔ スリープ失敗、またはノイズによる即時誤復帰！
                                 print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（または即時誤復帰した）ため、30秒後に再試行します。")
                                 
-                                # 初回のリトライ移行時のみ、スマホへ「リretryに入ります」という警告通知を送信する
+                                # 初回のリトライ移行時のみ、スマホへ警告通知を送信
                                 if not is_retrying:
                                     send_notifications(
                                         config,
@@ -563,16 +609,20 @@ def main():
                                 # 通常通りタイマーをリセット（また300秒待つ）
                                 low_net_standby_start_time = None
                     else:
-                        # 通信量上昇またはGPU高負荷によるリセット
+                        # 通信量上昇、GPU高負荷、またはダウンロード中によるリセット
                         if low_net_standby_start_time is not None:
                             if is_gpu_busy_with_python:
                                 print(f"\n{get_timestamp()} [情報] LoRA学習中(python高負荷)を検知したためスリープタイマーをリセットします。GPU: {gpu_util}%")
+                            elif is_downloading:
+                                print(f"\n{get_timestamp()} [情報] ファイルダウンロード中を検知したためスリープタイマーをリセットします。")
                             elif speed >= high_net_limit:
                                 print(f"\n{get_timestamp()} [情報] 高トラフィック(配信または高速DL: {speed:.1f} KB/s)を検知したためスリープタイマーをリセットします。")
                         low_net_standby_start_time = None
                         
                         if is_gpu_busy_with_python:
                             print(f"\r{get_timestamp()} [モニターOFF] LoRA学習保護中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}% (python)  ", end="", flush=True)
+                        elif is_downloading:
+                            print(f"\r{get_timestamp()} [モニターOFF] ファイルダウンロード中... | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif speed >= high_net_limit:
                             print(f"\r{get_timestamp()} [モニターOFF] 配信/高速DL保護中... | 通信: {speed:.1f} KB/s (高トラフィック)  ", end="", flush=True)
                         else:
@@ -586,7 +636,7 @@ def main():
     except KeyboardInterrupt:
         print("\n監視プログラムを終了しました。")
         # 終了時に念のためモニターをオンにする命令を送る
-        turn_on_monitor()
+        turn_off_monitor()
 
 if __name__ == "__main__":
     main()
