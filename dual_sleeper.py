@@ -290,6 +290,21 @@ class NetworkMonitor:
         self.last_time = current_time
         return speed
 
+def disable_quick_edit():
+    """Windowsコンソールの簡易編集モード(QuickEdit Mode)を無効化し、誤クリックによるフリーズを防止します。"""
+    try:
+        kernel32 = ctypes.windll.kernel32
+        # 標準入力のハンドルを取得 (STD_INPUT_HANDLE = -10)
+        h_input = kernel32.GetStdHandle(-10)
+        mode = ctypes.c_uint()
+        if kernel32.GetConsoleMode(h_input, ctypes.byref(mode)):
+            # ENABLE_QUICK_EDIT_MODE (0x0040) を取り除く
+            # ENABLE_EXTENDED_FLAGS (0x0080) も一緒に設定して適用する
+            new_mode = (mode.value & ~0x0040) | 0x0080
+            kernel32.SetConsoleMode(h_input, new_mode)
+    except Exception:
+        pass
+
 def load_config():
     """設定ファイルを読み込みます。存在しない場合はデフォルト値を返します。"""
     default_config = {
@@ -333,6 +348,9 @@ def get_timestamp():
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
 
 def main():
+    # 簡易編集モードを無効化
+    disable_quick_edit()
+
     # Discord Webhook & Telegram テスト送信のコマンドライン引数判定
     if len(sys.argv) > 1 and sys.argv[1] == "--test-webhook":
         config = load_config()
