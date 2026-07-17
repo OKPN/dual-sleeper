@@ -108,6 +108,42 @@ def send_discord_notification(webhook_url, message):
     except Exception as e:
         print(f"\n{get_timestamp()} [警告] Discord通知の送信に失敗しました: {e}")
 
+def send_telegram_notification(bot_token, chat_id, message):
+    """TelegramのBot APIを使ってメッセージを送信します。"""
+    if not bot_token or not chat_id:
+        return
+        
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown"
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
+    )
+    try:
+        # タイムアウトを5秒に設定して送信
+        with urllib.request.urlopen(req, timeout=5) as response:
+            pass
+    except Exception as e:
+        print(f"\n{get_timestamp()} [警告] Telegram通知の送信に失敗しました: {e}")
+
+def send_notifications(config, message):
+    """設定されているすべての通知サービス（Discord, Telegram）にメッセージを送信します。"""
+    # Discord
+    webhook_url = config.get("discord_webhook_url", "")
+    if webhook_url:
+        send_discord_notification(webhook_url, message)
+        
+    # Telegram
+    bot_token = config.get("telegram_bot_token", "")
+    chat_id = config.get("telegram_chat_id", "")
+    if bot_token and chat_id:
+        send_telegram_notification(bot_token, chat_id, message)
+
 def get_gpu_status(protect_processes):
     """
     NVIDIA GPUの使用率(%)と、現在GPUを使用している保護対象プロセスの有無を判定します。
@@ -204,6 +240,8 @@ def load_config():
         "hibernate_end_hour": 0,
         "force_monitor_off_idle_seconds": 900,
         "discord_webhook_url": "",
+        "telegram_bot_token": "",
+        "telegram_chat_id": "",
         "sleep_pending_seconds": 30,
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
@@ -228,17 +266,28 @@ def get_timestamp():
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
 
 def main():
-    # Discord Webhook テスト送信のコマンドライン引数判定
+    # Discord Webhook & Telegram テスト送信のコマンドライン引数判定
     if len(sys.argv) > 1 and sys.argv[1] == "--test-webhook":
         config = load_config()
-        url = config.get("discord_webhook_url", "")
-        if not url:
-            print("[エラー] config.json に discord_webhook_url が設定されていません。")
+        discord_url = config.get("discord_webhook_url", "")
+        telegram_token = config.get("telegram_bot_token", "")
+        telegram_chat = config.get("telegram_chat_id", "")
+        
+        if not discord_url and not (telegram_token and telegram_chat):
+            print("[エラー] config.json に通知先（Discord または Telegram）が設定されていません。")
             sys.exit(1)
-        print(f"Discord Webhookのテスト送信を行っています... (URL: {url[:30]}...)")
+            
         pc_name = get_computer_name()
-        send_discord_notification(url, f"🔔 **[{pc_name}]** Webhookテスト通知です。このメッセージが見えていれば連携は成功しています！")
-        print("テストメッセージを送信しました。Discordのチャンネルを確認してください。")
+        test_message = f"🔔 **[{pc_name}]** Webhookテスト通知です。このメッセージが見えていれば連携は成功しています！"
+        
+        if discord_url:
+            print(f"Discord Webhookのテスト送信を行っています... (URL: {discord_url[:30]}...)")
+            send_discord_notification(discord_url, test_message)
+        if telegram_token and telegram_chat:
+            print(f"Telegramのテスト送信を行っています... (Chat ID: {telegram_chat})")
+            send_telegram_notification(telegram_token, telegram_chat, test_message)
+            
+        print("テストメッセージの送信を試みました。スマホや各アプリを確認してください。")
         sys.exit(0)
 
     print("=" * 60)
@@ -277,10 +326,19 @@ def main():
         print("  ・GPU保護設定         : 無効")
         
     webhook_url = config.get("discord_webhook_url", "")
+    tg_token = config.get("telegram_bot_token", "")
+    tg_chat = config.get("telegram_chat_id", "")
+    
+    notifications = []
     if webhook_url:
-        print(f"  ・Discord通知         : 有効 (猶予: {config.get('sleep_pending_seconds', 10)} 秒)")
+        notifications.append("Discord")
+    if tg_token and tg_chat:
+        notifications.append("Telegram")
+        
+    if notifications:
+        print(f"  ・外部通知サービス    : {', '.join(notifications)} (猶予: {config.get('sleep_pending_seconds', 30)} 秒)")
     else:
-        print("  ・Discord通知         : 無効 (Webhook URL未設定)")
+        print("  ・外部通知サービス    : 無効 (通知先URL・ID未設定)")
         
     print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
@@ -417,17 +475,15 @@ def main():
                             
                             mode_name = "休止状態 (ハイバネート)" if use_hibernate else "スタンバイ (スリープ)"
                             pc_name = get_computer_name()
-                            pending_sec = config.get("sleep_pending_seconds", 10)
+                            pending_sec = config.get("sleep_pending_seconds", 30)
                             
                             print(f"\n{get_timestamp()} [スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。")
                             
-                            # Discord通知の送信
-                            webhook_url = config.get("discord_webhook_url", "")
-                            if webhook_url:
-                                send_discord_notification(
-                                    webhook_url,
-                                    f"🔔 **[{pc_name}]** まもなく {mode_name} に移行します。操作を検知した場合は自動でキャンセルされます。(猶予: {pending_sec}秒)"
-                                )
+                            # 通知の送信
+                            send_notifications(
+                                config,
+                                f"🔔 **[{pc_name}]** まもなく {mode_name} に移行します。操作を検知した場合は自動でキャンセルされます。(猶予: {pending_sec}秒)"
+                            )
                             
                             # 猶予期間中の割り込み（操作検知）の監視
                             canceled = False
@@ -447,24 +503,25 @@ def main():
                                 state = 0
                                 last_wakeup_time = time.time()
                                 net_monitor.get_speed()
-                                if webhook_url:
-                                    send_discord_notification(
-                                        webhook_url,
-                                        f"🟢 **[{pc_name}]** 操作を検知したため、スリープ移行をキャンセルしました。通常稼働に戻ります。"
-                                    )
+                                send_notifications(
+                                    config,
+                                    f"🟢 **[{pc_name}]** 操作を検知したため、スリープ移行をキャンセルしました。通常稼働に戻ります。"
+                                )
                                 continue
                             
                             # スリープを実行
                             print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
-                            if webhook_url:
-                                send_discord_notification(
-                                    webhook_url,
-                                    f"💤 **[{pc_name}]** システムを {mode_name} にしました。おやすみなさい。"
-                                )
+                            send_notifications(
+                                config,
+                                f"💤 **[{pc_name}]** システムを {mode_name} にしました。おやすみなさい。"
+                            )
                             
                             # 復帰直後は「消灯状態（State 2）」から開始するように設定
                             state = 2 
                             low_net_standby_start_time = None
+                            
+                            # スリープに入る直前の物理時刻を記録
+                            sleep_call_time = time.time()
                              
                             go_to_sleep(hibernate=use_hibernate)
                              
@@ -473,11 +530,23 @@ def main():
                             time.sleep(2)
                             net_monitor.get_speed()
                              
-                            # 復帰時のノイズや電源ボタン押下を「ユーザー操作」と誤検知するのを防ぐため、
-                            # 復帰直後の静まった状態の入力タイムスタンプを「消灯時の入力」として上書き記録する
+                            # 復帰時の入力状態を上書き記録
                             monitor_off_input_time = get_last_input_time_raw()
-                            # 復帰直後の無操作時間を0秒からカウントするために、last_wakeup_timeを現在時刻でリセット
                             last_wakeup_time = time.time()
+                            
+                            # 実際にどのくらいスリープしていたか（経過時間）を計算
+                            sleep_duration = time.time() - sleep_call_time
+                            
+                            if sleep_duration < 15.0:
+                                # 15秒未満で戻ってきた ➔ スリープ失敗、またはノイズによる即時誤復帰！
+                                print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（または即時誤復帰した）ため、30秒後に再試行します。")
+                                # スリープタイマーを「残り30秒」の状態にセットする
+                                low_net_standby_start_time = time.time() - (standby_limit - 30)
+                            else:
+                                # 15秒以上経って戻ってきた ➔ 本物の復帰！
+                                print(f"\n{get_timestamp()} [情報] スリープから復帰しました。モニター消灯状態（State 2）から通常通り再開します。")
+                                # 通常通りタイマーをリセット（また300秒待つ）
+                                low_net_standby_start_time = None
                     else:
                         # 通信量上昇またはGPU高負荷によるリセット
                         if low_net_standby_start_time is not None:
