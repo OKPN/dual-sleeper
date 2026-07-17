@@ -146,7 +146,7 @@ def send_notifications(config, message):
 
 def get_gpu_status(protect_processes):
     """
-    NVIDIA GPUの使用率(%)と、現在GPUを使用している保護対象プロセスの有無を判定します。
+    NVIDIA GPUの使用率(%) and、現在GPUを使用している保護対象プロセスの有無を判定します。
     戻り値: (gpu_utilization_percent, is_protect_process_active)
     """
     gpu_util = 0
@@ -512,16 +512,14 @@ def main():
                                     )
                                     is_retrying = False
                                     continue
-                                
-                                # 初回実行時のみ、スリープ実行通知を送信
-                                print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
-                                send_notifications(
-                                    config,
-                                    f"💤 **[{pc_name}]** システムを {mode_name} にしました。おやすみなさい。"
-                                )
-                            else:
-                                # リトライ中の場合は、通知は一切送信せず、ローカルコンソールにのみリトライログを出す
-                                print(f"\n{get_timestamp()} [実行] スリープ移行失敗のためリトライを実行します。({mode_name})")
+                            
+                            # スリープ実行通知の送信
+                            # ※リトライ中であっても「スリープに入ること（💤）」の実行通知だけはスマホへ送信する（都度の30秒予告やエラーはミュート）
+                            print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
+                            send_notifications(
+                                config,
+                                f"💤 **[{pc_name}]** システムを {mode_name} にしました。おやすみなさい。"
+                            )
                             
                             # 復帰直後は「消灯状態（State 2）」から開始するように設定
                             state = 2 
@@ -547,6 +545,14 @@ def main():
                             if sleep_duration < 15.0:
                                 # 15秒未満で戻ってきた ➔ スリープ失敗、またはノイズによる即時誤復帰！
                                 print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（または即時誤復帰した）ため、30秒後に再試行します。")
+                                
+                                # 初回のリトライ移行時のみ、スマホへ「リretryに入ります」という警告通知を送信する
+                                if not is_retrying:
+                                    send_notifications(
+                                        config,
+                                        f"⚠️ **[{pc_name}]** スリープの移行に失敗した（または即時誤復帰した）ため、成功するまで30秒おきにリトライ処理に入ります。"
+                                    )
+                                    
                                 is_retrying = True # リretryフラグをON
                                 # スリープタイマーを「残り30秒」の状態にセットする
                                 low_net_standby_start_time = time.time() - (standby_limit - 30)
