@@ -138,8 +138,8 @@ def send_discord_notification(webhook_url, message):
         headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
     )
     try:
-        # タイムアウトを5秒に設定して送信
-        with urllib.request.urlopen(req, timeout=5) as response:
+        # タイムアウトを15秒に設定して送信
+        with urllib.request.urlopen(req, timeout=15) as response:
             pass
     except Exception as e:
         print(f"\n{get_timestamp()} [警告] Discord通知の送信に失敗しました: {e}")
@@ -161,8 +161,8 @@ def send_telegram_notification(bot_token, chat_id, message):
         headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
     )
     try:
-        # タイムアウトを5秒に設定して送信
-        with urllib.request.urlopen(req, timeout=5) as response:
+        # タイムアウトを15秒に設定して送信（ネットワーク遅延に対応）
+        with urllib.request.urlopen(req, timeout=15) as response:
             pass
     except Exception as e:
         print(f"\n{get_timestamp()} [警告] Telegram通知の送信に失敗しました: {e}")
