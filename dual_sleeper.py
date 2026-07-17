@@ -63,15 +63,6 @@ def get_mouse_position():
         return pt.x, pt.y
     return 0, 0
 
-def is_any_key_pressed():
-    """キーボードのいずれかのキー、またはマウスクリックが現在押されているか判定します。"""
-    # 仮想キーコード (1: 左クリック 〜 255) の範囲をチェック
-    for key in range(1, 256):
-        # GetAsyncKeyState の最上位ビット（0x8000）が立っていれば押されていると判定
-        if ctypes.windll.user32.GetAsyncKeyState(key) & 0x8000:
-            return True
-    return False
-
 def turn_off_monitor():
     """モニターの電源をオフにします。"""
     ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
@@ -529,35 +520,21 @@ def main():
 
             elif state == 2:
                 # 【消灯状態】
-                # 1. 最後に操作した時間（TickCount）が変わったかをチェックして復帰判定
-                current_input_time = get_last_input_time_raw()
-                if current_input_time != monitor_off_input_time:
-                    # 何らかの入力を検知したが、それが本物の操作かノイズかを判別する
-                    curr_x, curr_y = get_mouse_position()
-                    dx = abs(curr_x - last_mouse_x)
-                    dy = abs(curr_y - last_mouse_y)
-                    
-                    # 判別条件:
-                    # (a) キーボードが押された、またはクリックされた (GetAsyncKeyStateが検知)
-                    # (b) マウスが一定以上（20ピクセル以上）動かされた
-                    is_real_input = is_any_key_pressed() or (dx >= 20 or dy >= 20)
-                    
-                    if is_real_input:
-                        print(f"\n{get_timestamp()} [復帰] 操作を検知しました。モニターをオンにします。")
-                        turn_on_monitor()
-                        state = 0
-                        last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
-                        net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
-                        is_retrying = False # 操作復帰時にリトライフラグをクリア
-                        retry_start_time = None
-                        has_sent_10min_warning = False
-                        continue
-                    else:
-                        # マウスの微振動やOSの遅延デバイス初期化信号などのノイズと判定
-                        # 画面は点灯させず、現在の状態（TickCountとマウス座標）を上書きラッチして静観を続ける
-                        monitor_off_input_time = current_input_time
-                        last_mouse_x, last_mouse_y = curr_x, curr_y
-                        continue
+                # 1. マウスが大きく動かされたか（20px以上）だけで復帰判定を行う（キー入力やマウスクリックは除外）
+                curr_x, curr_y = get_mouse_position()
+                dx = abs(curr_x - last_mouse_x)
+                dy = abs(curr_y - last_mouse_y)
+                
+                if dx >= 20 or dy >= 20:
+                    print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。モニターをオンにします。")
+                    turn_on_monitor()
+                    state = 0
+                    last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
+                    net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
+                    is_retrying = False # 操作復帰時にリトライフラグをクリア
+                    retry_start_time = None
+                    has_sent_10min_warning = False
+                    continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 standby_limit = config.get("standby_after_monitor_off_seconds", 0)
