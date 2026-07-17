@@ -51,9 +51,20 @@ def get_sleep_blocking_requests():
             elif current_section == "AWAYMODE" and line_str:
                 away_lines.append(line_str)
                 
-        # "なし" や 空行、セクション見出しを除外した、本当の妨害リクエストのリスト
-        active_system = [l for l in system_lines if l and l != "なし" and l != "None" and not l.startswith("[")]
-        active_away = [l for l in away_lines if l and l != "なし" and l != "None" and not l.startswith("[")]
+        # 日本語OS特有の「なし。」や英語の「None」などの無効行を除外して判定
+        def is_valid_request(l):
+            if not l:
+                return False
+            # 句点を取り除いて判定
+            l_clean = l.replace("。", "").strip().lower()
+            if l_clean in ["なし", "none", "なし。"]:
+                return False
+            if l.startswith("["):
+                return False
+            return True
+            
+        active_system = [l for l in system_lines if is_valid_request(l)]
+        active_away = [l for l in away_lines if is_valid_request(l)]
         
         all_blocks = active_system + active_away
         is_blocked = len(all_blocks) > 0
