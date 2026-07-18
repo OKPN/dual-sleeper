@@ -73,6 +73,19 @@ def get_mouse_position():
         return pt.x, pt.y
     return 0, 0
 
+def get_active_window_title():
+    """現在アクティブなウィンドウのタイトルを取得します（小文字で返却）。"""
+    try:
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        if length > 0:
+            buf = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+            return buf.value.lower()
+    except Exception:
+        pass
+    return ""
+
 def turn_off_monitor():
     """モニターの電源をオフにします。"""
     ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
@@ -583,7 +596,7 @@ def main():
     # リトライ制御用変数
     is_retrying = False # スリープ失敗時のリretry中フラグ
     retry_start_time = None # リretry開始の物理時刻
-    has_sent_10min_warning = False # 10分経過警告 of 送信済みフラグ
+    has_sent_10min_warning = False # 10分経過警告の送信済みフラグ
     
     # マウス座標記録用
     last_mouse_x, last_mouse_y = 0, 0
@@ -592,6 +605,11 @@ def main():
     wakeup_grace_until = 0
     user_active_during_grace = False
     wakeup_mouse_x, wakeup_mouse_y = 0, 0
+
+    # メディア強制点灯用変数
+    media_force_on_until = 0
+    last_detected_media_title = ""
+    media_extensions = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
     try:
         while True:
@@ -623,12 +641,58 @@ def main():
             current_time = time.time()
             physical_active_time = current_time - physical_idle
             
+            # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
+            config = load_config()
+
+            # ===== 【新機能】アクティブウィンドウのメディアファイル検知 =====
+            current_title = get_active_window_title()
+            has_media = any(ext in current_title for ext in media_extensions)
+            
+            if has_media:
+                # 前回の検知ファイルからタイトル名が変わった（＝新しく開いた）瞬間にのみタイマーを設定する
+                if current_title != last_detected_media_title:
+                    last_detected_media_title = current_title
+                    # 10分間（600秒）の強制点灯をセット
+                    media_force_on_until = time.time() + 600.0
+                    print(f"\n{get_timestamp()} [メディア検知] 新しいメディアファイル（...{current_title[-40:]}）のオープンを検知しました。10分間 (600秒) の強制点灯モードに入ります。")
+            else:
+                # メディアがアクティブでなくなったら記録をクリアして、再度同じファイルを開いた時に反応できるようにする
+                # ただし、同じファイルを開いたままであれば last_detected_media_title が残るためリピートを防止できる
+                last_detected_media_title = ""
+
+            # ===== 【メディア強制点灯モード処理】 =====
+            is_media_forced = (time.time() < media_force_on_until and media_force_on_until > 0)
+            if is_media_forced:
+                # 10分間はすべての操作チェックや省エネ状態への遷移を完全に無視する
+                last_wakeup_time = time.time() # 監視タイマーの基点を現在にし続ける
+                current_state_num = 0
+                current_idle_sec = 0.0
+                current_net_speed = speed
+                
+                # GPUステータスの更新
+                gpu_limit = config.get("gpu_limit_percent", 0)
+                gpu_procs = config.get("gpu_protect_processes", [])
+                gpu_util, gpu_protect_active = get_gpu_status(gpu_procs)
+                current_gpu_util = gpu_util
+                
+                mode_status = f" | 予約: {force_power_mode.upper() if force_power_mode else 'なし'}"
+                print(f"\r{get_timestamp()} [メディア強制点灯中] 残り時間: {int(media_force_on_until - current_time)}秒 | 通信: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
+                
+                time.sleep(config['check_interval_seconds'])
+                continue
+            elif media_force_on_until > 0:
+                # ちょうど10分が満了した瞬間
+                media_force_on_until = 0 # タイマーをクリア
+                state = 1 # 直接「通信監視状態 (State 1)」へ遷移！
+                low_net_start_time = time.time() # 通信量の監視を開始
+                # 無操作時間はすでに満了しているものとして偽装（ダミー時刻セット）
+                last_wakeup_time = time.time() - config['idle_limit_seconds']
+                print(f"\n{get_timestamp()} [状態遷移] メディア強制点灯時間が終了しました。放置の可能性があるため、通信監視状態（State 1）へダイレクト移行します。")
+                continue
+
             # 物理入力の時刻と、モニター復帰時刻 of いずれか新しい方を最終アクティブ時刻とする
             effective_active_time = max(physical_active_time, last_wakeup_time)
             idle_sec = current_time - effective_active_time
-            
-            # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
-            config = load_config()
             
             # グローバルステータスの更新（Telegramスレッドへのリアルタイム情報共有用）
             current_state_num = state
