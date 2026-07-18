@@ -371,12 +371,28 @@ def load_config():
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-                # デフォルト値のキーが欠落している場合に補完
-                for key, val in default_config.items():
-                    if key not in config:
-                        config[key] = val
-                return config
+                lines = f.readlines()
+            
+            # コメント行(// や #)を除去してからJSONとして読み込む
+            clean_lines = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("//") or stripped.startswith("#"):
+                    continue
+                if "//" in line:
+                    line = line.split("//")[0]
+                elif "#" in line:
+                    line = line.split("#")[0]
+                clean_lines.append(line)
+                
+            config_content = "".join(clean_lines)
+            config = json.loads(config_content)
+            
+            # デフォルト値のキーが欠落している場合に補完
+            for key, val in default_config.items():
+                if key not in config:
+                    config[key] = val
+            return config
         except Exception as e:
             print(f"設定ファイルの読み込みに失敗しました。デフォルト値を使用します。エラー: {e}")
     return default_config
