@@ -412,6 +412,15 @@ def load_config():
             print(f"設定ファイルの読み込みに失敗しました。デフォルト値を使用します。エラー: {e}")
     return default_config
 
+def save_config(config):
+    """設定オブジェクトを config.json に上書き保存（永続化）します。"""
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[エラー] 設定の保存に失敗しました: {e}")
+
 def get_timestamp():
     """現在の時刻を [MM/DD HH:MM:SS] フォーマットの文字列で返します。"""
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
@@ -472,25 +481,29 @@ def telegram_worker(bot_token, chat_id, pc_name):
                     if sender_chat_id != str(chat_id):
                         continue
                         
-                    text = message.get("text", "").strip().lower()
+                    text = message.get("text", "").strip()
                     if not text:
                         continue
                         
-                    # コマンド解析
+                    # コマンド解析 (大文字小文字を区別せず前置部分を取得)
+                    text_lower = text.lower()
+                    text_parts = text_lower.split()
+                    cmd = text_parts[0]
+                    
                     reply_text = ""
-                    if text in ("/sleep", "sleep"):
+                    if cmd in ("/sleep", "sleep"):
                         force_power_mode = "sleep"
                         reply_text = f"🟢 **[{pc_name}]** 次回終了モードを強制的に「スタンバイ (スリープ)」に予約しました。(復帰時に解除)"
                         print(f"\n{get_timestamp()} [リモート予約] Telegramから「スタンバイ (スリープ)」の強制予約を受信しました。")
-                    elif text in ("/hibernate", "hibernate"):
+                    elif cmd in ("/hibernate", "hibernate"):
                         force_power_mode = "hibernate"
                         reply_text = f"🟢 **[{pc_name}]** 次回終了モードを強制的に「休止状態 (ハイバネート)」に予約しました。(復帰時に解除)"
                         print(f"\n{get_timestamp()} [リモート予約] Telegramから「休止状態 (ハイバネート)」の強制予約を受信しました。")
-                    elif text in ("/cancel", "cancel"):
+                    elif cmd in ("/cancel", "cancel"):
                         force_power_mode = None
                         reply_text = f"🟢 **[{pc_name}]** 電源予約をキャンセルしました。(通常の時間帯制御に戻ります)"
                         print(f"\n{get_timestamp()} [リモート予約] Telegramから予約キャンセルを受信しました。")
-                    elif text in ("/status", "status"):
+                    elif cmd in ("/status", "status"):
                         state_names = {0: "通常状態 (State 0)", 1: "通信監視中 (State 1)", 2: "消灯中 (State 2)"}
                         state_str = state_names.get(current_state_num, "不明")
                         mode_str = force_power_mode.upper() if force_power_mode else "なし (通常時間帯制御)"
@@ -502,6 +515,27 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             f"·GPU使用率: {current_gpu_util} %\n"
                             f"·手動予約: {mode_str}"
                         )
+                    elif cmd in ("/server", "server"):
+                        config = load_config()
+                        if len(text_parts) > 1:
+                            sub_cmd = text_parts[1]
+                            if sub_cmd in ("off", "desktop", "always"):
+                                config["server_mode"] = sub_cmd
+                                save_config(config)
+                                reply_text = f"🟢 **[{pc_name}]** サーバモードを `{sub_cmd.upper()}` に変更し、設定ファイルを更新しました。"
+                                print(f"\n{get_timestamp()} [リモート設定] Telegramからサーバモード変更を受信: {sub_cmd.upper()}")
+                            else:
+                                reply_text = f"❌ **[{pc_name}]** 無効なモードです。`off`, `desktop`, `always` から選択してください。"
+                        else:
+                            current_mode = get_server_mode_type(config)
+                            reply_text = (
+                                f"⚙️ **[{pc_name}] サーバモード設定**\n"
+                                f"現在のモード: `{current_mode.upper()}`\n\n"
+                                f"変更するには以下のように送信してください:\n"
+                                f"· `server off` (通常運用)\n"
+                                f"· `server desktop` (デスクトップ時のみ)\n"
+                                f"· `server always` (常時適用)"
+                            )
                         
                     if reply_text:
                         send_telegram_notification(bot_token, chat_id, reply_text)
@@ -600,7 +634,7 @@ def main():
     else:
         print("  ・外部通知サービス    : 無効 (通知先URL・ID未設定)")
         
-    # モニター復帰マウス移動距離しきい値の出力
+    # モニターン復帰マウス移動距離しきい値の出力
     print(f"  ・モニター復帰マウス距離: {config.get('wakeup_mouse_distance_px', 100)} px (大きく動かした時のみ復帰)")
     
     # 復帰後の設定出力
