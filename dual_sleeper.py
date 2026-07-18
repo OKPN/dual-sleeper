@@ -808,7 +808,10 @@ def main():
                             continue
 
                     # 通常のState 1：監視中にユーザーが操作を再開したら通常状態に戻る
-                    if idle_sec < config['idle_limit_seconds']:
+                    limit_sec = config['idle_limit_seconds']
+                    if config.get("desktop_idle_shorten", False) and is_desktop_active():
+                        limit_sec = 30
+                    if idle_sec < limit_sec:
                         state = 0
                         low_net_start_time = None
                         print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
