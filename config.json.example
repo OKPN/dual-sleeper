@@ -19,5 +19,6 @@
   "gpu_protect_processes": ["python.exe", "python"],
   "gpu_limit_percent": 10,
   "high_network_limit_kbs": 625.0,
-  "server_mode": false
+  "server_mode": false,
+  "server_mode_standby_delay_seconds": 600
 }

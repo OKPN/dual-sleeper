@@ -207,7 +207,7 @@ def send_discord_notification(webhook_url, message):
         print(f"\n{get_timestamp()} [警告] Discord通知の送信に失敗しました: {e}")
 
 def send_telegram_notification(bot_token, chat_id, message):
-    """TelegramのBot APIを使ってメッセージを送信します。"""
+    """Telegram of Bot APIを使ってメッセージを送信します。"""
     if not bot_token or not chat_id:
         return
         
@@ -364,7 +364,8 @@ def load_config():
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0,
-        "server_mode": False
+        "server_mode": False,
+        "server_mode_standby_delay_seconds": 600
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     if os.path.exists(config_path):
@@ -576,7 +577,8 @@ def main():
     print(f"  ・復帰判断アクティブ値: {config.get('wakeup_active_threshold_seconds', 5)} 秒 (猶予終了時の判定しきい値)")
     
     # 高速消灯・サーバモードの出力
-    print(f"  ・高速消灯サーバモード: {'有効 (消灯: 30秒+30秒 | スリープ遅延: 10分)' if config.get('server_mode', False) else '無効'}")
+    server_delay = config.get("server_mode_standby_delay_seconds", 600)
+    print(f"  ・高速消灯サーバモード: {'有効 (消灯: 30秒+30秒 | スリープ遅延: ' + str(server_delay) + '秒)' if config.get('server_mode', False) else '無効'}")
     
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
@@ -689,7 +691,7 @@ def main():
             if is_server_active:
                 limit_sec = 30
                 net_check_duration = 30
-                standby_limit = 600 # システムスリープ移行待機時間を10分（600秒）に延長
+                standby_limit = config.get("server_mode_standby_delay_seconds", 600) # 設定値から動的取得
             else:
                 limit_sec = config['idle_limit_seconds']
                 net_check_duration = config['network_check_duration_seconds']
