@@ -99,6 +99,21 @@ def is_desktop_active():
         pass
     return False
 
+def get_server_mode_type(config):
+    """設定された server_mode の値を解析して、対応するモード文字列を返します。
+    後方互換性のため True/False も判定します。
+    """
+    val = config.get("server_mode", "off")
+    if val is True:
+        return "desktop"
+    if val is False:
+        return "off"
+    
+    val_str = str(val).strip().lower()
+    if val_str in ("desktop", "always", "off"):
+        return val_str
+    return "off"
+
 def turn_off_monitor():
     """モニターの電源をオフにします。"""
     ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
@@ -207,7 +222,7 @@ def send_discord_notification(webhook_url, message):
         print(f"\n{get_timestamp()} [警告] Discord通知の送信に失敗しました: {e}")
 
 def send_telegram_notification(bot_token, chat_id, message):
-    """Telegram of Bot APIを使ってメッセージを送信します。"""
+    """TelegramのBot APIを使ってメッセージを送信します。"""
     if not bot_token or not chat_id:
         return
         
@@ -364,7 +379,7 @@ def load_config():
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0,
-        "server_mode": False,
+        "server_mode": "off",
         "server_mode_standby_delay_seconds": 600
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -593,8 +608,15 @@ def main():
     print(f"  ・復帰判断アクティブ値: {config.get('wakeup_active_threshold_seconds', 5)} 秒 (猶予終了時の判定しきい値)")
     
     # 高速消灯・サーバモードの出力
+    mode_val = get_server_mode_type(config)
     server_delay = config.get("server_mode_standby_delay_seconds", 600)
-    print(f"  ・高速消灯サーバモード: {'有効 (消灯: 30秒+30秒 | スリープ遅延: ' + str(server_delay) + '秒)' if config.get('server_mode', False) else '無効'}")
+    if mode_val == "desktop":
+        mode_desc = f"有効 (デスクトップ時のみ | 消灯: 30秒+30秒 | スリープ遅延: {server_delay}秒)"
+    elif mode_val == "always":
+        mode_desc = f"有効 (常時適用 | 消灯: 30秒+30秒 | スリープ遅延: {server_delay}秒)"
+    else:
+        mode_desc = "無効"
+    print(f"  ・高速消灯サーバモード: {mode_desc}")
     
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
@@ -695,10 +717,17 @@ def main():
                 last_detected_media_title = ""
 
             # ===== 高速消灯・サーバモードにおける直接遷移判定 =====
-            is_server_active = config.get("server_mode", False) and is_desktop_active()
-            if state == 0 and is_server_active:
-                # 通常状態（State 0）のとき、デスクトップ表示（アクティブウィンドウなし）を検知したら
-                # 無操作時間の経過を待たずに、直接通信監視状態（State 1）へ移行してカウントを開始する
+            mode_val = get_server_mode_type(config)
+            is_server_active = False
+            if mode_val == "always":
+                is_server_active = True
+            elif mode_val == "desktop":
+                is_server_active = is_desktop_active()
+
+            # desktopモードの場合は、デスクトップ表示（アクティブウィンドウなし）を検知した瞬間に
+            # 無操作時間の経過を待たずに、直接通信監視状態（State 1）へ移行してカウントを開始する
+            # ※alwaysモードは特定のウィンドウ状態というトリガーがないため、通常通り無操作30秒でState 1へ移行する
+            if state == 0 and mode_val == "desktop" and is_desktop_active():
                 state = 1
                 low_net_start_time = time.time()
                 print(f"\n{get_timestamp()} [状態遷移] デスクトップ表示（サーバモード）を検知したため、直接「通信監視状態（State 1）」から開始します。")
