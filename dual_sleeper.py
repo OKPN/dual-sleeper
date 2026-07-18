@@ -364,7 +364,7 @@ def load_config():
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0,
-        "desktop_idle_shorten": False
+        "server_mode": False
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     if os.path.exists(config_path):
@@ -575,8 +575,8 @@ def main():
     print(f"  ・復帰後判定猶予時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (OSノイズ回避用)")
     print(f"  ・復帰判断アクティブ値: {config.get('wakeup_active_threshold_seconds', 5)} 秒 (猶予終了時の判定しきい値)")
     
-    # デスクトップ高速消灯モードの出力
-    print(f"  ・デスクトップ高速消灯: {'有効 (30秒)' if config.get('desktop_idle_shorten', False) else '無効'}")
+    # 高速消灯・サーバモードの出力
+    print(f"  ・高速消灯サーバモード: {'有効 (消灯: 30秒+30秒 | スリープ遅延: 10分)' if config.get('server_mode', False) else '無効'}")
     
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
@@ -676,6 +676,25 @@ def main():
                 # メディアがアクティブでなくなったら記録をクリアして、再度同じファイルを開いた時に反応できるようにする
                 last_detected_media_title = ""
 
+            # ===== 高速消灯・サーバモードにおける直接遷移判定 =====
+            is_server_active = config.get("server_mode", False) and is_desktop_active()
+            if state == 0 and is_server_active:
+                # 通常状態（State 0）のとき、デスクトップ表示（アクティブウィンドウなし）を検知したら
+                # 無操作時間の経過を待たずに、直接通信監視状態（State 1）へ移行してカウントを開始する
+                state = 1
+                low_net_start_time = time.time()
+                print(f"\n{get_timestamp()} [状態遷移] デスクトップ表示（サーバモード）を検知したため、直接「通信監視状態（State 1）」から開始します。")
+
+            # ===== 各状態における動的しきい値の設定 =====
+            if is_server_active:
+                limit_sec = 30
+                net_check_duration = 30
+                standby_limit = 600 # システムスリープ移行待機時間を10分（600秒）に延長
+            else:
+                limit_sec = config['idle_limit_seconds']
+                net_check_duration = config['network_check_duration_seconds']
+                standby_limit = config.get("standby_after_monitor_off_seconds", 0)
+
             # ===== 【メディア強制点灯モード処理】 =====
             is_media_forced = (time.time() < media_force_on_until and media_force_on_until > 0)
             if is_media_forced:
@@ -744,14 +763,7 @@ def main():
             
             if state == 0:
                 # 【通常状態】
-                # デスクトップ表示時のアイドル時間短縮判定
-                limit_sec = config['idle_limit_seconds']
-                is_desktop = False
-                if config.get("desktop_idle_shorten", False) and is_desktop_active():
-                    limit_sec = 30
-                    is_desktop = True
-                
-                desktop_status = " (デスクトップ)" if is_desktop else ""
+                desktop_status = " (サーバモード)" if is_server_active else ""
                 mode_status = f" | 予約: {force_power_mode.upper() if force_power_mode else 'なし'}"
                 print(f"\r{get_timestamp()} [稼働中] 無操作時間: {idle_sec:.1f}/{limit_sec}秒{desktop_status} | 通信速度: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
                 
@@ -808,9 +820,6 @@ def main():
                             continue
 
                     # 通常のState 1：監視中にユーザーが操作を再開したら通常状態に戻る
-                    limit_sec = config['idle_limit_seconds']
-                    if config.get("desktop_idle_shorten", False) and is_desktop_active():
-                        limit_sec = 30
                     if idle_sec < limit_sec:
                         state = 0
                         low_net_start_time = None
@@ -827,10 +836,10 @@ def main():
                     
                     elapsed_low_net = time.time() - low_net_start_time
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
-                    print(f"\r{get_timestamp()} [通信監視中] 低通信継続: {elapsed_low_net:.1f}/{config['network_check_duration_seconds']}秒 | 通信速度: {speed:.1f} KB/s{dl_status}  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 低通信継続: {elapsed_low_net:.1f}/{net_check_duration}秒 | 通信速度: {speed:.1f} KB/s{dl_status}  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
-                    if elapsed_low_net >= config['network_check_duration_seconds']:
+                    if elapsed_low_net >= net_check_duration:
                         print(f"\n{get_timestamp()} [実行] モニターをオフにします。")
                         turn_off_monitor()
                         time.sleep(1.0) # 消灯時のシステムラグやマウスの微振動をやり過ごす
@@ -865,7 +874,6 @@ def main():
                     continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
-                standby_limit = config.get("standby_after_monitor_off_seconds", 0)
                 if standby_limit > 0:
                     # 高トラフィック（配信など）のしきい値を取得
                     high_net_limit = config.get("high_network_limit_kbs", 625.0)
