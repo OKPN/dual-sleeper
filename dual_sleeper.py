@@ -657,12 +657,21 @@ def main():
                     print(f"\n{get_timestamp()} [メディア検知] 新しいメディアファイル（...{current_title[-40:]}）のオープンを検知しました。10分間 (600秒) の強制点灯モードに入ります。")
             else:
                 # メディアがアクティブでなくなったら記録をクリアして、再度同じファイルを開いた時に反応できるようにする
-                # ただし、同じファイルを開いたままであれば last_detected_media_title が残るためリピートを防止できる
                 last_detected_media_title = ""
 
             # ===== 【メディア強制点灯モード処理】 =====
             is_media_forced = (time.time() < media_force_on_until and media_force_on_until > 0)
             if is_media_forced:
+                # メディアウィンドウが非アクティブ化された（閉じられた、または別ウインドウへ切り替えられた）場合
+                # 最初に検知したファイルタイトルが現在のタイトルから消失したかをチェック
+                if last_detected_media_title not in current_title:
+                    print(f"\n{get_timestamp()} [状態遷移] メディアウィンドウの非アクティブ化（またはクローズ）を検知したため、強制点灯を打ち切り、通常監視（State 0）へ移行します。")
+                    media_force_on_until = 0
+                    state = 0
+                    last_wakeup_time = time.time()
+                    net_monitor.get_speed()
+                    continue
+
                 # 10分間はすべての操作チェックや省エネ状態への遷移を完全に無視する
                 last_wakeup_time = time.time() # 監視タイマーの基点を現在にし続ける
                 current_state_num = 0
@@ -818,7 +827,6 @@ def main():
                 
                 if dx >= limit_px or dy >= limit_px:
                     print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。状態遷移（State 0）を行います。")
-                    # turn_on_monitor() を削除 (OSの標準機能が自動で画面を点灯させるため)
                     state = 0
                     last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
                     net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
