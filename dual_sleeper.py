@@ -583,7 +583,7 @@ def main():
     # リトライ制御用変数
     is_retrying = False # スリープ失敗時のリretry中フラグ
     retry_start_time = None # リretry開始の物理時刻
-    has_sent_10min_warning = False # 10分経過警告の送信済みフラグ
+    has_sent_10min_warning = False # 10分経過警告 of 送信済みフラグ
     
     # マウス座標記録用
     last_mouse_x, last_mouse_y = 0, 0
@@ -753,8 +753,8 @@ def main():
                 limit_px = config.get("wakeup_mouse_distance_px", 100)
                 
                 if dx >= limit_px or dy >= limit_px:
-                    print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。モニターをオンにします。")
-                    turn_on_monitor()
+                    print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。状態遷移（State 0）を行います。")
+                    # turn_on_monitor() を削除 (OSの標準機能が自動で画面を点灯させるため)
                     state = 0
                     last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
                     net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
@@ -844,7 +844,7 @@ def main():
                                     
                                 if canceled:
                                     print(f"\n{get_timestamp()} [キャンセル] 猶予時間中に操作を検知したため、スリープを中止しました。モニターをONに戻します。")
-                                    turn_on_monitor()
+                                    turn_on_monitor() # プログラムの意思で点灯させるため維持
                                     state = 0
                                     last_wakeup_time = time.time()
                                     net_monitor.get_speed()
@@ -903,7 +903,7 @@ def main():
                                 # 15秒以上経って戻ってきた ➔ 本物のスリープ成功＆正常復帰！
                                 # ※復帰直後は「通信監視状態（State 1）」から開始し、指定秒数監視後に分岐させる
                                 print(f"\n{get_timestamp()} [情報] スリープから復帰しました。通信監視状態（State 1）から再開します。")
-                                turn_on_monitor()
+                                turn_on_monitor() # プログラムの意思で点灯させるため維持
                                 
                                 # スリープの開始、終了時刻、および睡眠実績時間を計算して通知
                                 sleep_end_dt = datetime.datetime.now()
