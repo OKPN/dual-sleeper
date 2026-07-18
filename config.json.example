@@ -18,5 +18,6 @@
   "wakeup_active_threshold_seconds": 5,
   "gpu_protect_processes": ["python.exe", "python"],
   "gpu_limit_percent": 10,
-  "high_network_limit_kbs": 625.0
+  "high_network_limit_kbs": 625.0,
+  "desktop_idle_shorten": false
 }

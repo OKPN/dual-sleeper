@@ -86,6 +86,19 @@ def get_active_window_title():
         pass
     return ""
 
+def is_desktop_active():
+    """現在デスクトップ画面またはタスクバーがアクティブウィンドウになっているか判定します。"""
+    try:
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        class_name = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetClassNameW(hwnd, class_name, 256)
+        name = class_name.value
+        # Progman, WorkerW (デスクトップ背景/アイコン), Shell_TrayWnd (タスクバー)
+        return name in ("Progman", "WorkerW", "Shell_TrayWnd")
+    except Exception:
+        pass
+    return False
+
 def turn_off_monitor():
     """モニターの電源をオフにします。"""
     ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
@@ -350,7 +363,8 @@ def load_config():
         "wakeup_active_threshold_seconds": 5,
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
-        "high_network_limit_kbs": 625.0
+        "high_network_limit_kbs": 625.0,
+        "desktop_idle_shorten": False
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     if os.path.exists(config_path):
@@ -561,6 +575,9 @@ def main():
     print(f"  ・復帰後判定猶予時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (OSノイズ回避用)")
     print(f"  ・復帰判断アクティブ値: {config.get('wakeup_active_threshold_seconds', 5)} 秒 (猶予終了時の判定しきい値)")
     
+    # デスクトップ高速消灯モードの出力
+    print(f"  ・デスクトップ高速消灯: {'有効 (30秒)' if config.get('desktop_idle_shorten', False) else '無効'}")
+    
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
@@ -595,7 +612,7 @@ def main():
     
     # リトライ制御用変数
     is_retrying = False # スリープ失敗時のリretry中フラグ
-    retry_start_time = None # リretry開始の物理時刻
+    retry_start_time = None # リretry開始 of 物理時刻
     has_sent_10min_warning = False # 10分経過警告の送信済みフラグ
     
     # マウス座標記録用
@@ -727,14 +744,22 @@ def main():
             
             if state == 0:
                 # 【通常状態】
+                # デスクトップ表示時のアイドル時間短縮判定
+                limit_sec = config['idle_limit_seconds']
+                is_desktop = False
+                if config.get("desktop_idle_shorten", False) and is_desktop_active():
+                    limit_sec = 30
+                    is_desktop = True
+                
+                desktop_status = " (デスクトップ)" if is_desktop else ""
                 mode_status = f" | 予約: {force_power_mode.upper() if force_power_mode else 'なし'}"
-                print(f"\r{get_timestamp()} [稼働中] 無操作時間: {idle_sec:.1f}/{config['idle_limit_seconds']}秒 | 通信速度: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
+                print(f"\r{get_timestamp()} [稼働中] 無操作時間: {idle_sec:.1f}/{limit_sec}秒{desktop_status} | 通信速度: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
                 
                 # 操作がない時間がしきい値を超えたら、通信監視状態に遷移
-                if idle_sec >= config['idle_limit_seconds']:
+                if idle_sec >= limit_sec:
                     state = 1
                     low_net_start_time = None
-                    print(f"\n{get_timestamp()} [状態遷移] 無操作時間を超えました。ネットワーク通信量の監視を開始します。")
+                    print(f"\n{get_timestamp()} [状態遷移] 無操作時間（{limit_sec}秒）を超えました。ネットワーク通信量の監視を開始します。")
 
             elif state == 1:
                 # 【通信監視状態】
