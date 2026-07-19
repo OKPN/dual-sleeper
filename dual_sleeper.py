@@ -507,7 +507,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                     
                     # 1. sleep コマンドのハンドリング (トグル化)
                     if cmd in ("/sleep", "sleep"):
-                        # 電源予約のトグルマップ
+                        # 電源予約のトグルマップ (None -> sleep -> hibernate -> None)
                         next_power_modes = {
                             None: "sleep",
                             "sleep": "hibernate",
@@ -530,7 +530,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             force_power_mode = next_power_modes.get(force_power_mode, None)
                             
                         if force_power_mode == "invalid":
-                            reply_text = f"❌ **[{pc_name}]** 無効な予約モードです。`sleep`, `hibernate`, `cancel` から指定するか、`sleep` とだけ送信して切り替えてください。"
+                            reply_text = f"❌ **[{pc_name}]** 無効な予約モードです。`sleep` とだけ送信して切り替えてください。"
                         else:
                             mode_labels = {
                                 "sleep": "強制スタンバイ (スリープ)",
@@ -549,19 +549,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             )
                             print(f"\n{get_timestamp()} [リモート予約] Telegramから電源予約変更を受信: {str(force_power_mode).upper()}")
                     
-                    # 2. hibernate コマンドの互換性維持
-                    elif cmd in ("/hibernate", "hibernate"):
-                        force_power_mode = "hibernate"
-                        reply_text = f"🟢 **[{pc_name}]** 次回終了モードを強制的に「休止状態 (ハイバネート)」に予約しました。(復帰時に解除)"
-                        print(f"\n{get_timestamp()} [リモート予約] Telegramから「休止状態 (ハイバネート)」の強制予約を受信しました。")
-                    
-                    # 3. cancel コマンドのハンドリング
-                    elif cmd in ("/cancel", "cancel"):
-                        force_power_mode = None
-                        reply_text = f"🟢 **[{pc_name}]** 電源予約をキャンセルしました。(通常の時間帯制御に戻ります)"
-                        print(f"\n{get_timestamp()} [リモート予約] Telegramから予約キャンセルを受信しました。")
-                    
-                    # 4. status コマンドのハンドリング（サーバモードと手動予約の表示拡張）
+                    # 2. status コマンドのハンドリング（サーバモードと手動予約の表示拡張）
                     elif cmd in ("/status", "status"):
                         state_names = {0: "通常状態 (State 0)", 1: "通信監視中 (State 1)", 2: "消灯中 (State 2)"}
                         state_str = state_names.get(current_state_num, "不明")
@@ -592,7 +580,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             f"·サーバモード: `{server_str}`"
                         )
                     
-                    # 5. server コマンドのハンドリング
+                    # 3. server コマンドのハンドリング
                     elif cmd in ("/server", "server"):
                         config = load_config()
                         current_mode = get_server_mode_type(config)
@@ -632,19 +620,18 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         else:
                             reply_text = f"❌ **[{pc_name}]** 無効なモードです。`off`, `desktop`, `always` から選択するか、`server` とだけ送信して切り替えてください。"
                     
-                    # 6. 無効な入力（その他のメッセージ）に対するヘルプ自動応答
+                    # 4. 無効な入力（その他のメッセージ）に対するヘルプ自動応答 (古いコマンドは削除)
                     else:
                         reply_text = (
                             f"💡 **[{pc_name}] コマンドヘルプ**\n"
-                            f"送信するたびに状態が切り替わるトグル式コマンドが利用可能です。\n\n"
+                            f"送信するたびに状態が切り替わるトグル式コマンドが便利です。\n\n"
                             f"📌 **トグルコマンド (送信するたびに順次切替)**\n"
                             f"· `sleep` : 電源予約の切替\n"
                             f"  (予約なし ➔ 強制スリープ ➔ 強制休止状態)\n"
                             f"· `server`: サーバモードの切替\n"
                             f"  (オフ ➔ デスクトップのみ ➔ 常時適用)\n\n"
                             f"📌 **通常コマンド**\n"
-                            f"· `status`: 現在の稼働状況を確認する\n"
-                            f"· `cancel`: 設定された電源予約を解除する"
+                            f"· `status`: 現在の稼働状況を確認する"
                         )
                         
                     if reply_text:
@@ -768,7 +755,7 @@ def main():
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
     print("=" * 60)
     print("【キーボード操作】 h:電源予約切替 (スタンバイ ➔ ハイバネート ➔ 解除) | s:サーバモード切替 (デスクトップ ➔ 常時 ➔ オフ)")
-    print("【リモート操作】   Telegram Bot から /sleep, /hibernate, /cancel, /status, /server が利用可能")
+    print("【リモート操作】   Telegram Bot から /sleep, /status, /server が利用可能")
     print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
 
