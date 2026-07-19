@@ -426,7 +426,7 @@ def save_config(config):
         print(f"[エラー] 設定の保存に失敗しました: {e}")
 
 def get_timestamp():
-    """現在の時刻を [MM/DD HH:MM:SS] フォーマットの文字列で返します。"""
+    """現在の時刻を [MM/DD HH:MM:SS] フォーマット of 文字列で返します。"""
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
 
 def telegram_worker(bot_token, chat_id, pc_name):
@@ -530,25 +530,45 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         )
                     elif cmd in ("/server", "server"):
                         config = load_config()
+                        current_mode = get_server_mode_type(config)
+                        
+                        # トグル遷移の定義 (off -> desktop -> always -> off)
+                        next_modes = {
+                            "off": "desktop",
+                            "desktop": "always",
+                            "always": "off"
+                        }
+                        
+                        # メッセージ引数に直接指定（"server desktop" など）があればそれを優先適用、
+                        # なければ「server」とだけ打たれたとして、トグル（順次切り替え）処理を行う
                         if len(text_parts) > 1:
                             sub_cmd = text_parts[1]
                             if sub_cmd in ("off", "desktop", "always"):
-                                config["server_mode"] = sub_cmd
-                                save_config(config)
-                                reply_text = f"🟢 **[{pc_name}]** サーバモードを `{sub_cmd.upper()}` に変更し、設定ファイルを更新しました。"
-                                print(f"\n{get_timestamp()} [リモート設定] Telegramからサーバモード変更を受信: {sub_cmd.upper()}")
+                                next_mode = sub_cmd
                             else:
-                                reply_text = f"❌ **[{pc_name}]** 無効なモードです。`off`, `desktop`, `always` から選択してください。"
+                                next_mode = None
                         else:
-                            current_mode = get_server_mode_type(config)
+                            next_mode = next_modes.get(current_mode, "off")
+                            
+                        if next_mode:
+                            config["server_mode"] = next_mode
+                            save_config(config)
+                            
+                            # モード表示用日本語マップ
+                            mode_labels = {
+                                "off": "オフ (通常運用)",
+                                "desktop": "デスクトップ時のみ有効",
+                                "always": "常時適用"
+                            }
+                            
                             reply_text = (
                                 f"⚙️ **[{pc_name}] サーバモード設定**\n"
-                                f"現在のモード: `{current_mode.upper()}`\n\n"
-                                f"変更するには以下のように送信してください:\n"
-                                f"· `server off` (通常運用)\n"
-                                f"· `server desktop` (デスクトップ時のみ)\n"
-                                f"· `server always` (常時適用)"
+                                f"サーバモードを `{mode_labels[next_mode]}` に変更・保存しました。\n\n"
+                                f"※次回 `server` と単体で送信すると、次のモード (`{mode_labels[next_modes[next_mode]]}`) に切り替わります。"
                             )
+                            print(f"\n{get_timestamp()} [リモート設定] Telegramからサーバモード変更を受信: {next_mode.upper()}")
+                        else:
+                            reply_text = f"❌ **[{pc_name}]** 無効なモードです。`off`, `desktop`, `always` から選択するか、`server` とだけ送信して切り替えてください。"
                         
                     if reply_text:
                         send_telegram_notification(bot_token, chat_id, reply_text)
@@ -786,8 +806,7 @@ def main():
             if is_server_active:
                 limit_sec = 30
                 net_check_duration = 30
-                # サーバモード時のスリープ遅延を取得
-                raw_standby_limit = config.get("server_mode_standby_delay_seconds", 600)
+                raw_standby_limit = config.get("server_mode_standby_delay_seconds", 600) # 設定値から動的取得
             else:
                 limit_sec = config['idle_limit_seconds']
                 net_check_duration = config['network_check_duration_seconds']
