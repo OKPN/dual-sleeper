@@ -504,30 +504,95 @@ def telegram_worker(bot_token, chat_id, pc_name):
                     cmd = text_parts[0]
                     
                     reply_text = ""
+                    
+                    # 1. sleep コマンドのハンドリング (トグル化)
                     if cmd in ("/sleep", "sleep"):
-                        force_power_mode = "sleep"
-                        reply_text = f"🟢 **[{pc_name}]** 次回終了モードを強制的に「スタンバイ (スリープ)」に予約しました。(復帰時に解除)"
-                        print(f"\n{get_timestamp()} [リモート予約] Telegramから「スタンバイ (スリープ)」の強制予約を受信しました。")
+                        # 電源予約のトグルマップ
+                        next_power_modes = {
+                            None: "sleep",
+                            "sleep": "hibernate",
+                            "hibernate": None
+                        }
+                        
+                        # 引数が直接指定されている場合は優先適用
+                        if len(text_parts) > 1:
+                            sub_cmd = text_parts[1]
+                            if sub_cmd in ("sleep", "s"):
+                                force_power_mode = "sleep"
+                            elif sub_cmd in ("hibernate", "h"):
+                                force_power_mode = "hibernate"
+                            elif sub_cmd in ("cancel", "c", "off", "none"):
+                                force_power_mode = None
+                            else:
+                                force_power_mode = "invalid"
+                        else:
+                            # 引数なしはトグル
+                            force_power_mode = next_power_modes.get(force_power_mode, None)
+                            
+                        if force_power_mode == "invalid":
+                            reply_text = f"❌ **[{pc_name}]** 無効な予約モードです。`sleep`, `hibernate`, `cancel` から指定するか、`sleep` とだけ送信して切り替えてください。"
+                        else:
+                            mode_labels = {
+                                "sleep": "強制スタンバイ (スリープ)",
+                                "hibernate": "強制休止状態 (ハイバネート)",
+                                None: "予約なし (時間帯制御)"
+                            }
+                            next_labels = {
+                                "sleep": "強制休止状態 (ハイバネート)",
+                                "hibernate": "予約なし (解除)",
+                                None: "強制スタンバイ (スリープ)"
+                            }
+                            reply_text = (
+                                f"🟢 **[{pc_name}] 電源予約設定**\n"
+                                f"電源予約を `{mode_labels[force_power_mode]}` に変更しました。\n\n"
+                                f"※次回 `sleep` と送信すると、次のモード (`{next_labels[force_power_mode]}`) に切り替わります。"
+                            )
+                            print(f"\n{get_timestamp()} [リモート予約] Telegramから電源予約変更を受信: {str(force_power_mode).upper()}")
+                    
+                    # 2. hibernate コマンドの互換性維持
                     elif cmd in ("/hibernate", "hibernate"):
                         force_power_mode = "hibernate"
                         reply_text = f"🟢 **[{pc_name}]** 次回終了モードを強制的に「休止状態 (ハイバネート)」に予約しました。(復帰時に解除)"
                         print(f"\n{get_timestamp()} [リモート予約] Telegramから「休止状態 (ハイバネート)」の強制予約を受信しました。")
+                    
+                    # 3. cancel コマンドのハンドリング
                     elif cmd in ("/cancel", "cancel"):
                         force_power_mode = None
                         reply_text = f"🟢 **[{pc_name}]** 電源予約をキャンセルしました。(通常の時間帯制御に戻ります)"
                         print(f"\n{get_timestamp()} [リモート予約] Telegramから予約キャンセルを受信しました。")
+                    
+                    # 4. status コマンドのハンドリング（サーバモードと手動予約の表示拡張）
                     elif cmd in ("/status", "status"):
                         state_names = {0: "通常状態 (State 0)", 1: "通信監視中 (State 1)", 2: "消灯中 (State 2)"}
                         state_str = state_names.get(current_state_num, "不明")
-                        mode_str = force_power_mode.upper() if force_power_mode else "なし (通常時間帯制御)"
+                        
+                        mode_labels = {
+                            "sleep": "強制スタンバイ (スリープ)",
+                            "hibernate": "強制休止状態 (ハイバネート)",
+                            None: "なし (通常時間帯制御)"
+                        }
+                        mode_str = mode_labels.get(force_power_mode, "なし")
+                        
+                        config_tmp = load_config()
+                        server_mode_val = get_server_mode_type(config_tmp)
+                        server_labels = {
+                            "off": "オフ (通常運用)",
+                            "desktop": "デスクトップ時のみ有効",
+                            "always": "常時適用"
+                        }
+                        server_str = server_labels.get(server_mode_val, "オフ")
+                        
                         reply_text = (
                             f"📊 **[{pc_name}] 現在のステータス**\n"
                             f"·状態: {state_str}\n"
                             f"·無操作時間: {current_idle_sec:.1f} 秒\n"
                             f"·通信速度: {current_net_speed:.1f} KB/s\n"
                             f"·GPU使用率: {current_gpu_util} %\n"
-                            f"·手動予約: {mode_str}"
+                            f"·電源予約: `{mode_str}`\n"
+                            f"·サーバモード: `{server_str}`"
                         )
+                    
+                    # 5. server コマンドのハンドリング
                     elif cmd in ("/server", "server"):
                         config = load_config()
                         current_mode = get_server_mode_type(config)
@@ -539,8 +604,6 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             "always": "off"
                         }
                         
-                        # メッセージ引数に直接指定（"server desktop" など）があればそれを優先適用、
-                        # なければ「server」とだけ打たれたとして、トグル（順次切り替え）処理を行う
                         if len(text_parts) > 1:
                             sub_cmd = text_parts[1]
                             if sub_cmd in ("off", "desktop", "always"):
@@ -554,7 +617,6 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             config["server_mode"] = next_mode
                             save_config(config)
                             
-                            # モード表示用日本語マップ
                             mode_labels = {
                                 "off": "オフ (通常運用)",
                                 "desktop": "デスクトップ時のみ有効",
@@ -569,6 +631,21 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             print(f"\n{get_timestamp()} [リモート設定] Telegramからサーバモード変更を受信: {next_mode.upper()}")
                         else:
                             reply_text = f"❌ **[{pc_name}]** 無効なモードです。`off`, `desktop`, `always` から選択するか、`server` とだけ送信して切り替えてください。"
+                    
+                    # 6. 無効な入力（その他のメッセージ）に対するヘルプ自動応答
+                    else:
+                        reply_text = (
+                            f"💡 **[{pc_name}] コマンドヘルプ**\n"
+                            f"送信するたびに状態が切り替わるトグル式コマンドが利用可能です。\n\n"
+                            f"📌 **トグルコマンド (送信するたびに順次切替)**\n"
+                            f"· `sleep` : 電源予約の切替\n"
+                            f"  (予約なし ➔ 強制スリープ ➔ 強制休止状態)\n"
+                            f"· `server`: サーバモードの切替\n"
+                            f"  (オフ ➔ デスクトップのみ ➔ 常時適用)\n\n"
+                            f"📌 **通常コマンド**\n"
+                            f"· `status`: 現在の稼働状況を確認する\n"
+                            f"· `cancel`: 設定された電源予約を解除する"
+                        )
                         
                     if reply_text:
                         send_telegram_notification(bot_token, chat_id, reply_text)
