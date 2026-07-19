@@ -426,7 +426,7 @@ def save_config(config):
         print(f"[エラー] 設定の保存に失敗しました: {e}")
 
 def get_timestamp():
-    """現在の時刻を [MM/DD HH:MM:SS] フォーマット of 文字列で返します。"""
+    """現在の時刻を [MM/DD HH:MM:SS] フォーマットの文字列で返します。"""
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
 
 def telegram_worker(bot_token, chat_id, pc_name):
@@ -690,8 +690,8 @@ def main():
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
     print("=" * 60)
-    print("【キーボード操作】 s:次回強制スタンバイ | h:次回強制ハイバネート | c:予約解除")
-    print("【リモート操作】   Telegram Bot から /sleep, /hibernate, /cancel, /status が利用可能")
+    print("【キーボード操作】 h:電源予約切替 (スタンバイ ➔ ハイバネート ➔ 解除) | s:サーバモード切替 (デスクトップ ➔ 常時 ➔ オフ)")
+    print("【リモート操作】   Telegram Bot から /sleep, /hibernate, /cancel, /status, /server が利用可能")
     print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
 
@@ -749,15 +749,43 @@ def main():
                         msvcrt.getch()
                         continue
                     ch = char_code.decode("utf-8").lower()
-                    if ch == "s":
-                        force_power_mode = "sleep"
-                        print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「スタンバイ (スリープ)」を実行します。(復帰時にリセット)")
-                    elif ch == "h":
-                        force_power_mode = "hibernate"
-                        print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「休止状態 (ハイバネート)」を実行します。(復帰時にリセット)")
-                    elif ch == "c":
-                        force_power_mode = None
-                        print(f"\n{get_timestamp()} [手動予約] 予約された電源モードを解除しました。(通常設定の時間帯制御に戻ります)")
+                    
+                    if ch == "h":
+                        # 電源手動予約のトグル切り替え (None -> sleep -> hibernate -> None)
+                        next_power_modes = {
+                            None: "sleep",
+                            "sleep": "hibernate",
+                            "hibernate": None
+                        }
+                        force_power_mode = next_power_modes.get(force_power_mode, None)
+                        
+                        if force_power_mode == "sleep":
+                            print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「スタンバイ (スリープ)」を実行します。(復帰時にリセット)")
+                        elif force_power_mode == "hibernate":
+                            print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「休止状態 (ハイバネート)」を実行します。(復帰時にリセット)")
+                        else:
+                            print(f"\n{get_timestamp()} [手動予約] 予約された電源モードを解除しました。(通常設定の時間帯制御に戻ります)")
+                            
+                    elif ch == "s":
+                        # サーバモード設定のトグル切り替え (off -> desktop -> always -> off)
+                        config = load_config()
+                        current_mode = get_server_mode_type(config)
+                        next_server_modes = {
+                            "off": "desktop",
+                            "desktop": "always",
+                            "always": "off"
+                        }
+                        next_mode = next_server_modes.get(current_mode, "off")
+                        
+                        config["server_mode"] = next_mode
+                        save_config(config)
+                        
+                        mode_labels = {
+                            "off": "オフ (通常運用)",
+                            "desktop": "デスクトップ時のみ有効",
+                            "always": "常時適用"
+                        }
+                        print(f"\n{get_timestamp()} [設定変更] サーバモードを「{mode_labels[next_mode]}」に変更しました。")
                 except Exception:
                     pass
 
