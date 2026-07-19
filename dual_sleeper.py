@@ -383,6 +383,7 @@ def load_config():
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0,
+        "keep_awake_window_titles": ["youtube", "twitch", "zoom"],
         "server_mode": "off",
         "server_mode_standby_delay_seconds": 600
     }
@@ -750,6 +751,13 @@ def main():
         mode_desc = "無効"
     print(f"  ・高速消灯サーバモード: {mode_desc}")
     
+    # 点灯延長対象タイトルの出力
+    keep_awake_kw = config.get("keep_awake_window_titles", [])
+    if keep_awake_kw:
+        print(f"  ・点灯延長対象タイトル: {', '.join(keep_awake_kw)}")
+    else:
+        print("  ・点灯延長対象タイトル: なし")
+        
     # ダウンロードフォルダの自動取得
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
@@ -864,19 +872,23 @@ def main():
             # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
             config = load_config()
 
-            # ===== 【新機能】アクティブウィンドウのメディアファイル検知 =====
+            # ===== 【新機能】アクティブウィンドウのメディアファイルおよび登録タイトル検知 =====
             current_title = get_active_window_title()
             has_media = any(ext in current_title for ext in media_extensions)
             
-            if has_media:
-                # 前回の検知ファイルからタイトル名が変わった（＝新しく開いた）瞬間にのみタイマーを設定する
+            # config.json に登録された点灯維持タイトルのキーワード判定
+            keep_awake_kw = config.get("keep_awake_window_titles", [])
+            has_custom_kw = any(str(kw).lower() in current_title for kw in keep_awake_kw if kw)
+            
+            if has_media or has_custom_kw:
+                # 前回の検知ファイル/キーワードからタイトル名が変わった（＝新しく開いた・別動画にした）瞬間にのみタイマーを設定する
                 if current_title != last_detected_media_title:
                     last_detected_media_title = current_title
                     # 10分間（600秒）の強制点灯をセット
                     media_force_on_until = time.time() + 600.0
-                    print(f"\n{get_timestamp()} [メディア検知] 新しいメディアファイル（...{current_title[-40:]}）のオープンを検知しました。10分間 (600秒) の強制点灯モードに入ります。")
+                    print(f"\n{get_timestamp()} [メディア/登録タイトル検知] 点灯延長対象（...{current_title[-40:]}）のオープンを検知しました。10分間 (600秒) の強制点灯モードに入ります。")
             else:
-                # メディアがアクティブでなくなったら記録をクリアして、再度同じファイルを開いた時に反応できるようにする
+                # 非アクティブの時はクリア
                 last_detected_media_title = ""
 
             # ===== 高速消灯・サーバモードにおける直接遷移判定 =====
