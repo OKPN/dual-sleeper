@@ -383,7 +383,7 @@ def load_config():
         "gpu_protect_processes": ["python.exe", "python"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0,
-        "keep_awake_window_titles": ["youtube", "twitch", "zoom"],
+        "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60"],
         "server_mode": "off",
         "server_mode_standby_delay_seconds": 600
     }
@@ -767,7 +767,7 @@ def main():
     print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
 
-    # Telegram受信バックグラウンドスレッドの起動
+    # Telegram受信バックグラウンドスレッド의 起動
     pc_name = get_computer_name()
     if tg_token and tg_chat:
         tg_thread = threading.Thread(
@@ -878,15 +878,38 @@ def main():
             
             # config.json に登録された点灯維持タイトルのキーワード判定
             keep_awake_kw = config.get("keep_awake_window_titles", [])
-            has_custom_kw = any(str(kw).lower() in current_title for kw in keep_awake_kw if kw)
+            has_custom_kw = False
+            custom_duration = 600.0 # デフォルト10分 (600秒)
             
+            for item in keep_awake_kw:
+                if not item:
+                    continue
+                item_str = str(item).strip()
+                if ":" in item_str:
+                    parts = item_str.split(":", 1)
+                    kw = parts[0].strip().lower()
+                    try:
+                        # 整数または小数(分)を秒に変換
+                        duration = float(parts[1].strip()) * 60.0
+                    except ValueError:
+                        duration = 600.0
+                else:
+                    kw = item_str.lower()
+                    duration = 600.0
+                
+                if kw and kw in current_title:
+                    has_custom_kw = True
+                    custom_duration = duration
+                    break # 最初に一致したものの設定を適用
+
             if has_media or has_custom_kw:
                 # 前回の検知ファイル/キーワードからタイトル名が変わった（＝新しく開いた・別動画にした）瞬間にのみタイマーを設定する
                 if current_title != last_detected_media_title:
                     last_detected_media_title = current_title
-                    # 10分間（600秒）の強制点灯をセット
-                    media_force_on_until = time.time() + 600.0
-                    print(f"\n{get_timestamp()} [メディア/登録タイトル検知] 点灯延長対象（...{current_title[-40:]}）のオープンを検知しました。10分間 (600秒) の強制点灯モードに入ります。")
+                    # 指定された延長時間（秒）をセット（デフォルトは10分）
+                    target_duration = 600.0 if has_media else custom_duration
+                    media_force_on_until = time.time() + target_duration
+                    print(f"\n{get_timestamp()} [メディア/登録タイトル検知] 点灯延長対象（...{current_title[-40:]}）のオープンを検知しました。{int(target_duration // 60)}分間 ({int(target_duration)}秒) の強制点灯モードに入ります。")
             else:
                 # 非アクティブの時はクリア
                 last_detected_media_title = ""
@@ -948,7 +971,7 @@ def main():
                 current_gpu_util = gpu_util
                 
                 mode_status = f" | 予約: {force_power_mode.upper() if force_power_mode else 'なし'}"
-                print(f"\r{get_timestamp()} [メディア強制点灯中] 残り時間: {int(media_force_on_until - current_time)}秒 | 通信: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
+                print(f"\r{get_timestamp()} [メディア強制点灯中]  残り時間: {int(media_force_on_until - current_time)}秒 | 通信: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
                 
                 time.sleep(config['check_interval_seconds'])
                 continue
