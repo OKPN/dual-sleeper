@@ -29,7 +29,7 @@
   // 長時間無操作の際、通信量やGPU等の状態を問わずモニターを強制消灯するしきい値（秒、0で無効）
   "force_monitor_off_idle_seconds": 900,
 
-  // スリープ前後の通知を送るためのDiscord of Webhook URL（空文字で無効）
+  // スリープ前後の通知を送るためのDiscordのWebhook URL（空文字で無効）
   "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
 
   // Telegram遠隔制御・通知用のBot Token（空文字で無効）
@@ -50,10 +50,13 @@
   // スリープ復帰の猶予期間終了時、本当に人間が操作したかを判定する無操作時間しきい値（秒）
   "wakeup_active_threshold_seconds": 5,
 
-  // GPU保護（スリープ禁止）の対象とするプロセス名リスト
+  // GPU保護（スリープ禁止）の対象とするプロセス名リスト（小文字・前方一致）
+  // pythonでのAI学習（PyTorch等）や、llama-server等のローカルLLM推論プロセスの名前を登録します
   "gpu_protect_processes": [
     "python.exe",
-    "python"
+    "python",
+    "llama-server.exe",
+    "llama-server"
   ],
 
   // GPU保護を発動させるGPU使用率のしきい値（%、0で無効）
