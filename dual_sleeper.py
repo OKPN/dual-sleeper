@@ -47,6 +47,10 @@ current_net_speed = 0.0
 current_gpu_util = 0
 telegram_offset = 0
 
+# Telegram割り込みスリープ延長用グローバル変数
+is_sleep_pending = False
+telegram_extend_request = False
+
 def get_idle_duration():
     """最後にマウス・キーボード操作があってからの経過時間（秒）を取得します。"""
     lii = LASTINPUTINFO()
@@ -429,6 +433,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
     """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
     global force_power_mode, telegram_offset
     global current_state_num, current_idle_sec, current_net_speed, current_gpu_util
+    global is_sleep_pending, telegram_extend_request
     
     if not bot_token or not chat_id:
         return
@@ -485,7 +490,15 @@ def telegram_worker(bot_token, chat_id, pc_name):
                     if not text:
                         continue
                         
-                    # コマンド解析 (大文字小文字を区別せず前置部分を取得)
+                    # ===== スリープ警告中（カウントダウン30秒中）の割り込み処理 =====
+                    if is_sleep_pending:
+                        telegram_extend_request = True
+                        reply_text = f"🟢 **[{pc_name}]** スリープ移行を一時的に10分間延長しました。(モニター消灯状態維持)"
+                        print(f"\n{get_timestamp()} [リモート設定] Telegramから割り込み入力を受信したため、スリープ移行を10分間延長します。")
+                        send_telegram_notification(bot_token, chat_id, reply_text)
+                        continue
+
+                    # 通常時のコマンド解析 (大文字小文字を区別せず前置部分を取得)
                     text_lower = text.lower()
                     text_parts = text_lower.split()
                     cmd = text_parts[0]
@@ -547,6 +560,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 def main():
     global force_power_mode
     global current_state_num, current_idle_sec, current_net_speed, current_gpu_util
+    global is_sleep_pending, telegram_extend_request
 
     # 簡易編集モードを無効化
     disable_quick_edit()
@@ -634,7 +648,7 @@ def main():
     else:
         print("  ・外部通知サービス    : 無効 (通知先URL・ID未設定)")
         
-    # モニターン復帰マウス移動距離しきい値の出力
+    # モニター復帰マウス移動距離しきい値の出力
     print(f"  ・モニター復帰マウス距離: {config.get('wakeup_mouse_distance_px', 100)} px (大きく動かした時のみ復帰)")
     
     # 復帰後の設定出力
@@ -702,6 +716,9 @@ def main():
     last_detected_media_title = ""
     media_extensions = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
+    # 一時的な延長時間記憶用
+    extended_standby_limit = 0
+
     try:
         while True:
             # 常に非同期でローカルのキーボード入力をチェック
@@ -760,7 +777,6 @@ def main():
 
             # desktopモードの場合は、デスクトップ表示（アクティブウィンドウなし）を検知した瞬間に
             # 無操作時間の経過を待たずに、直接通信監視状態（State 1）へ移行してカウントを開始する
-            # ※alwaysモードは特定のウィンドウ状態というトリガーがないため、通常通り無操作30秒でState 1へ移行する
             if state == 0 and mode_val == "desktop" and is_desktop_active():
                 state = 1
                 low_net_start_time = time.time()
@@ -770,11 +786,18 @@ def main():
             if is_server_active:
                 limit_sec = 30
                 net_check_duration = 30
-                standby_limit = config.get("server_mode_standby_delay_seconds", 600) # 設定値から動的取得
+                # サーバモード時のスリープ遅延を取得
+                raw_standby_limit = config.get("server_mode_standby_delay_seconds", 600)
             else:
                 limit_sec = config['idle_limit_seconds']
                 net_check_duration = config['network_check_duration_seconds']
-                standby_limit = config.get("standby_after_monitor_off_seconds", 0)
+                raw_standby_limit = config.get("standby_after_monitor_off_seconds", 0)
+
+            # 一時的な延長がセットされている場合は、それを最優先する
+            if extended_standby_limit > 0:
+                standby_limit = extended_standby_limit
+            else:
+                standby_limit = raw_standby_limit
 
             # ===== 【メディア強制点灯モード処理】 =====
             is_media_forced = (time.time() < media_force_on_until and media_force_on_until > 0)
@@ -889,6 +912,7 @@ def main():
                             net_monitor.get_speed()
                             # ユーザーが明示的に操作したため、一時予約は解除する
                             force_power_mode = None
+                            extended_standby_limit = 0 # 復帰時は一時延長を解除
                             continue
                         else:
                             print(f"\n{get_timestamp()} [状態遷移] 復帰猶予中に操作ノイズ以外は検知されなかったため、モニターを消灯して消灯状態（State 2）へ移行します。")
@@ -905,6 +929,7 @@ def main():
                         state = 0
                         low_net_start_time = None
                         print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
+                        extended_standby_limit = 0 # 復帰時は一時延長を解除
                         continue
                 
                 # ファイルダウンロード中であるかチェック
@@ -952,6 +977,7 @@ def main():
                     retry_start_time = None
                     has_sent_10min_warning = False
                     force_power_mode = None # 操作復帰時は手動予約をクリアする
+                    extended_standby_limit = 0 # 復帰時は一時延長を解除
                     continue
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
@@ -1011,47 +1037,82 @@ def main():
                             pending_sec = config.get("sleep_pending_seconds", 30)
                             
                             canceled = False
+                            cancel_reason = ""
                             
                             # リトライ時ではない場合のみ、スマホへスリープ予告通知と猶予時間の監視を行う
                             if not is_retrying:
                                 print(f"\n{get_timestamp()} [スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。({mode_desc})")
                                 send_notifications(
                                     config,
-                                    f"🔔 **[{pc_name}]** まもなく {mode_name} に移行します。({mode_desc})\n操作を検知した場合は自動でキャンセルされます。(猶予: {pending_sec}秒)"
+                                    f"🔔 **[{pc_name}] まもなく {mode_name} に移行します。**\n"
+                                    f"({mode_desc})\n"
+                                    f"スマホから何か文字・数字を送信すると、移行を一時的に10分間延長（モニター消灯維持）します。"
                                 )
                                 
                                 # 猶予期間中の割り込み（操作検知）の監視
                                 start_pending_time = time.time()
                                 monitor_off_input_time_before = get_last_input_time_raw()
                                 
+                                # グローバル割り込み受付フラグの初期化
+                                is_sleep_pending = True
+                                telegram_extend_request = False
+                                
                                 while time.time() - start_pending_time < pending_sec:
+                                    # 1. 物理デバイスでの操作検知
                                     current_input = get_last_input_time_raw()
                                     if current_input != monitor_off_input_time_before:
                                         canceled = True
+                                        cancel_reason = "physical"
                                         break
-                                    time.sleep(0.5) # 0.5秒おきに操作チェック
                                     
+                                    # 2. Telegramからの「なんでも1文字入力」によるスリープ延長割り込み検知
+                                    if telegram_extend_request:
+                                        canceled = True
+                                        cancel_reason = "telegram"
+                                        break
+                                        
+                                    time.sleep(0.5) # 0.5秒おきに操作チェック
+                                
+                                # 警告期間終了
+                                is_sleep_pending = False
+                                
                                 if canceled:
-                                    print(f"\n{get_timestamp()} [キャンセル] 猶予時間中に操作を検知したため、スリープを中止しました。モニターをONに戻します。")
-                                    turn_on_monitor() # プログラムの意思で点灯させるため維持
-                                    state = 0
-                                    last_wakeup_time = time.time()
-                                    net_monitor.get_speed()
-                                    send_notifications(
-                                        config,
-                                        f"🟢 **[{pc_name}]** 操作を検知したため、スリープ移行をキャンセルしました。通常稼働に戻ります。"
-                                    )
-                                    is_retrying = False
-                                    retry_start_time = None
-                                    has_sent_10min_warning = False
-                                    force_power_mode = None # 一時予約を解除
-                                    continue
+                                    if cancel_reason == "telegram":
+                                        # Telegramによる延長：画面は暗いまま、待機時間だけを10分(600秒)延長する！
+                                        print(f"\n{get_timestamp()} [延長] Telegramからの割り込みを受信したため、スリープを10分間延長します。モニター消灯状態は維持されます。")
+                                        state = 2 # 消灯を維持
+                                        low_net_standby_start_time = time.time() # タイマーのリセット
+                                        extended_standby_limit = 600 # 延長時間（10分）を次のスリープ判定に強制適用
+                                        is_retrying = False
+                                        retry_start_time = None
+                                        has_sent_10min_warning = False
+                                        # 割り込み要求フラグのクリア
+                                        telegram_extend_request = False
+                                        continue
+                                    else:
+                                        # 物理デバイス操作によるキャンセル：通常画面に復帰
+                                        print(f"\n{get_timestamp()} [キャンセル] 猶予時間中に操作を検知したため、スリープを中止しました。モニターをONに戻します。")
+                                        turn_on_monitor()
+                                        state = 0
+                                        last_wakeup_time = time.time()
+                                        net_monitor.get_speed()
+                                        send_notifications(
+                                            config,
+                                            f"🟢 **[{pc_name}]** 操作を検知したため、スリープ移行をキャンセルしました。通常稼働に戻ります。"
+                                        )
+                                        is_retrying = False
+                                        retry_start_time = None
+                                        has_sent_10min_warning = False
+                                        force_power_mode = None # 一時予約を解除
+                                        extended_standby_limit = 0
+                                        continue
                             
                             print(f"{get_timestamp()} [実行] システムを {mode_name} にします。")
                             
                             # 復帰直後は「消灯状態（State 2）」から開始するように設定
                             state = 2 
                             low_net_standby_start_time = None
+                            extended_standby_limit = 0
                             
                             # スリープに入る直前の物理時刻と現在時刻を記録
                             sleep_call_time = time.time()
