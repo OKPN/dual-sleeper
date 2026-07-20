@@ -54,6 +54,7 @@ telegram_extend_request = False
 
 # HyperKey (Win + Ctrl + Shift + Alt + M) 即時消灯トリガー用グローバル変数
 hotkey_state2_triggered = False
+last_hotkey_time = 0.0
 
 def get_idle_duration():
     """最後にマウス・キーボード操作があってからの経過時間（秒）を取得します。"""
@@ -127,15 +128,15 @@ def turn_off_monitor():
     ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
 
 def turn_on_monitor():
-    """モニターの電源をオンにし、マウス入力をシミュレートして復帰を促します。"""
+    """モニターの電源をオンにし、マウス入力をシミュレートして確実な点灯を促します。"""
+    # 1. モニター電源オンのSysCommand送信
     ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, -1)
     
-    # 確実に復帰させるため、マウスカーソルを少し動かして戻す
-    pt = POINT()
-    if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
-        ctypes.windll.user32.SetCursorPos(pt.x + 1, pt.y + 1)
-        time.sleep(0.05)
-        ctypes.windll.user32.SetCursorPos(pt.x, pt.y)
+    # 2. Windows OSに物理的なマウス移動イベント(mouse_event)を発射してバックライトを点灯させる
+    # MOUSEEVENTF_MOVE = 0x0001
+    ctypes.windll.user32.mouse_event(0x0001, 1, 0, 0, 0)
+    time.sleep(0.05)
+    ctypes.windll.user32.mouse_event(0x0001, -1, 0, 0, 0)
 
 def go_to_sleep(hibernate=False):
     """システムをスタンバイ（スリープ）または休止状態（ハイバネート）にします。"""
@@ -677,7 +678,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 def main():
     global force_power_mode
     global current_state_num, current_idle_sec, current_net_speed, current_gpu_util
-    global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered
+    global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered, last_hotkey_time
 
     # 簡易編集モードを無効化
     disable_quick_edit()
@@ -857,24 +858,29 @@ def main():
                 # ===== グローバルホットキー (Win + Ctrl + Shift + Alt + M) トグル判定 =====
                 if hotkey_state2_triggered:
                     hotkey_state2_triggered = False
-                    if state == 2:
-                        # 消灯中 (State 2) の場合は、モニターを点灯して State 0 (通常状態) へ復帰
-                        print(f"\n{get_timestamp()} [ホットキー] HyperKey 検知: モニターを点灯し「通常状態 (State 0)」へ復帰します。")
-                        turn_on_monitor()
-                        state = 0
-                        last_wakeup_time = time.time()
-                        net_monitor.get_speed()
-                        extended_standby_limit = 0
-                        force_power_mode = None
-                    else:
-                        # 点灯中 (State 0 または 1) の場合は、即座にモニターを消灯して State 2 へ遷移
-                        print(f"\n{get_timestamp()} [ホットキー] HyperKey 検知: 即座にモニターを消灯し「消灯状態 (State 2)」へ遷移します。")
-                        turn_off_monitor()
-                        time.sleep(1.0)
-                        state = 2
-                        monitor_off_input_time = get_last_input_time_raw()
-                        last_mouse_x, last_mouse_y = get_mouse_position()
-                        low_net_standby_start_time = None
+                    now_t = time.time()
+                    
+                    # 1.5秒以内の連続・リピート入力を完全にガード（連打による「点灯➔即消灯」の防止）
+                    if now_t - last_hotkey_time >= 1.5:
+                        last_hotkey_time = now_t
+                        if state == 2:
+                            # 消灯中 (State 2) の場合は、モニターを確実に点灯し State 0 (通常状態) へ復帰
+                            print(f"\n{get_timestamp()} [ホットキー] HyperKey 検知: モニターを点灯し「通常状態 (State 0)」へ復帰します。")
+                            turn_on_monitor()
+                            state = 0
+                            last_wakeup_time = time.time()
+                            net_monitor.get_speed()
+                            extended_standby_limit = 0
+                            force_power_mode = None
+                        else:
+                            # 点灯中 (State 0 または 1) の場合は、即座にモニターを消灯して State 2 へ遷移
+                            print(f"\n{get_timestamp()} [ホットキー] HyperKey 検知: 即座にモニターを消灯し「消灯状態 (State 2)」へ遷移します。")
+                            turn_off_monitor()
+                            time.sleep(1.0)
+                            state = 2
+                            monitor_off_input_time = get_last_input_time_raw()
+                            last_mouse_x, last_mouse_y = get_mouse_position()
+                            low_net_standby_start_time = None
                     break # インナーループを出てメイン処理へ
 
                 # 常に非同期でローカルのキーボード入力をチェック (即時反映)
@@ -1191,7 +1197,7 @@ def main():
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 if standby_limit > 0:
-                    # 高トラフィック（配信など）のしきい値を取得
+                    # 高トラフィック（配信など）のしきいを取得
                     high_net_limit = config.get("high_network_limit_kbs", 625.0)
                     
                     # ファイルダウンロード中であるかチェック
