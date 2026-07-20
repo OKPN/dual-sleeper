@@ -448,7 +448,7 @@ def hotkey_worker():
             registered = user32.RegisterHotKey(None, HOTKEY_ID, 15, 0x4D)
             
         if registered:
-            print(f"{get_timestamp()} [システム] グローバルホットキー登録完了: [Win + Ctrl + Shift + Alt + M] (即時消灯)")
+            print(f"{get_timestamp()} [システム] グローバルホットキー登録完了: [Win + Ctrl + Shift + Alt + M] (即時トグル切替)")
             msg = ctypes.wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
                 if msg.message == 0x0312: # WM_HOTKEY
@@ -794,7 +794,7 @@ def main():
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
     print("=" * 60)
-    print("【キーボード操作】 h:電源予約切替 | s:サーバモード切替 | [Win+Ctrl+Shift+Alt+M]:即時モニター消灯")
+    print("【キーボード操作】 h:電源予約切替 | s:サーバモード切替 | [Win+Ctrl+Shift+Alt+M]:即時トグル切替")
     print("【リモート操作】   Telegram Bot から /sleep, /status, /server が利用可能")
     print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
@@ -854,16 +854,27 @@ def main():
             sub_loops = int(check_interval / 0.1)
             
             for _ in range(max(1, sub_loops)):
-                # ===== グローバルホットキー (Win + Ctrl + Shift + Alt + M) トリガー判定 =====
+                # ===== グローバルホットキー (Win + Ctrl + Shift + Alt + M) トグル判定 =====
                 if hotkey_state2_triggered:
                     hotkey_state2_triggered = False
-                    print(f"\n{get_timestamp()} [ホットキー] HyperKey [Win+Ctrl+Shift+Alt+M] を検知しました。即座にモニターを消灯し「消灯状態 (State 2)」へ遷移します。")
-                    turn_off_monitor()
-                    time.sleep(1.0)
-                    state = 2
-                    monitor_off_input_time = get_last_input_time_raw()
-                    last_mouse_x, last_mouse_y = get_mouse_position()
-                    low_net_standby_start_time = None
+                    if state == 2:
+                        # 消灯中 (State 2) の場合は、モニターを点灯して State 0 (通常状態) へ復帰
+                        print(f"\n{get_timestamp()} [ホットキー] HyperKey 検知: モニターを点灯し「通常状態 (State 0)」へ復帰します。")
+                        turn_on_monitor()
+                        state = 0
+                        last_wakeup_time = time.time()
+                        net_monitor.get_speed()
+                        extended_standby_limit = 0
+                        force_power_mode = None
+                    else:
+                        # 点灯中 (State 0 または 1) の場合は、即座にモニターを消灯して State 2 へ遷移
+                        print(f"\n{get_timestamp()} [ホットキー] HyperKey 検知: 即座にモニターを消灯し「消灯状態 (State 2)」へ遷移します。")
+                        turn_off_monitor()
+                        time.sleep(1.0)
+                        state = 2
+                        monitor_off_input_time = get_last_input_time_raw()
+                        last_mouse_x, last_mouse_y = get_mouse_position()
+                        low_net_standby_start_time = None
                     break # インナーループを出てメイン処理へ
 
                 # 常に非同期でローカルのキーボード入力をチェック (即時反映)
