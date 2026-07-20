@@ -51,6 +51,9 @@ telegram_offset = 0
 is_sleep_pending = False
 telegram_extend_request = False
 
+# HyperKey (Win + Ctrl + Shift + Alt + M) 即時消灯トリガー用グローバル変数
+hotkey_state2_triggered = False
+
 def get_idle_duration():
     """最後にマウス・キーボード操作があってからの経過時間（秒）を取得します。"""
     lii = LASTINPUTINFO()
@@ -380,7 +383,7 @@ def load_config():
         "wakeup_mouse_distance_px": 100,
         "wakeup_mouse_grace_seconds": 20,
         "wakeup_active_threshold_seconds": 5,
-        "gpu_protect_processes": ["python.exe", "python"],
+        "gpu_protect_processes": ["python.exe", "python", "llama-server.exe", "llama-server"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0,
         "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60"],
@@ -429,6 +432,27 @@ def save_config(config):
 def get_timestamp():
     """現在の時刻を [MM/DD HH:MM:SS] フォーマットの文字列で返します。"""
     return datetime.datetime.now().strftime("[%m/%d %H:%M:%S]")
+
+def hotkey_worker():
+    """HyperKey (Win + Ctrl + Shift + Alt + M) を監視するバックグラウンドスレッド"""
+    global hotkey_state2_triggered
+    try:
+        user32 = ctypes.windll.user32
+        HOTKEY_ID = 1001
+        # fsModifiers = MOD_ALT (1) | MOD_CONTROL (2) | MOD_SHIFT (4) | MOD_WIN (8) = 15 (0x0F)
+        # VK_M = 0x4D (77)
+        if user32.RegisterHotKey(None, HOTKEY_ID, 15, 0x4D):
+            print(f"{get_timestamp()} [システム] グローバルホットキー登録完了: [Win + Ctrl + Shift + Alt + M] (即時消灯)")
+            msg = ctypes.wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+                if msg.message == 0x0312: # WM_HOTKEY
+                    if msg.wParam == HOTKEY_ID:
+                        hotkey_state2_triggered = True
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+            user32.UnregisterHotKey(None, HOTKEY_ID)
+    except Exception as e:
+        print(f"[警告] ホットキー監視スレッドでエラーが発生しました: {e}")
 
 def telegram_worker(bot_token, chat_id, pc_name):
     """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
@@ -645,7 +669,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 def main():
     global force_power_mode
     global current_state_num, current_idle_sec, current_net_speed, current_gpu_util
-    global is_sleep_pending, telegram_extend_request
+    global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered
 
     # 簡易編集モードを無効化
     disable_quick_edit()
@@ -762,12 +786,16 @@ def main():
     downloads_dir = get_downloads_folder()
     print(f"  ・ダウンロードフォルダ: {downloads_dir}")
     print("=" * 60)
-    print("【キーボード操作】 h:電源予約切替 (スタンバイ ➔ ハイバネート ➔ 解除) | s:サーバモード切替 (デスクトップ ➔ 常時 ➔ オフ)")
+    print("【キーボード操作】 h:電源予約切替 | s:サーバモード切替 | [Win+Ctrl+Shift+Alt+M]:即時モニター消灯")
     print("【リモート操作】   Telegram Bot から /sleep, /status, /server が利用可能")
     print("=" * 60)
     print("監視を開始します。終了するには Ctrl+C を押してください。\n")
 
-    # Telegram受信バックグラウンドスレッド의 起動
+    # グローバルホットキー監視スレッドの起動
+    hk_thread = threading.Thread(target=hotkey_worker, daemon=True)
+    hk_thread.start()
+
+    # Telegram受信バックグラウンドスレッドの起動
     pc_name = get_computer_name()
     if tg_token and tg_chat:
         tg_thread = threading.Thread(
@@ -813,6 +841,19 @@ def main():
 
     try:
         while True:
+            # ===== グローバルホットキー (Win + Ctrl + Shift + Alt + M) トリガー判定 =====
+            if hotkey_state2_triggered:
+                hotkey_state2_triggered = False
+                print(f"\n{get_timestamp()} [ホットキー] HyperKey [Win+Ctrl+Shift+Alt+M] を検知しました。即座にモニターを消灯し「消灯状態 (State 2)」へ遷移します。")
+                turn_off_monitor()
+                time.sleep(1.0)
+                state = 2
+                monitor_off_input_time = get_last_input_time_raw()
+                last_mouse_x, last_mouse_y = get_mouse_position()
+                low_net_standby_start_time = None
+                time.sleep(config['check_interval_seconds'])
+                continue
+
             # 常に非同期でローカルのキーボード入力をチェック
             while msvcrt.kbhit():
                 try:
@@ -971,7 +1012,7 @@ def main():
                 current_gpu_util = gpu_util
                 
                 mode_status = f" | 予約: {force_power_mode.upper() if force_power_mode else 'なし'}"
-                print(f"\r{get_timestamp()} [メディア強制点灯中]  残り時間: {int(media_force_on_until - current_time)}秒 | 通信: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
+                print(f"\r{get_timestamp()} [メディア強制点灯中] 残り時間: {int(media_force_on_until - current_time)}秒 | 通信: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
                 
                 time.sleep(config['check_interval_seconds'])
                 continue
