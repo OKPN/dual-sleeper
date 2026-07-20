@@ -439,9 +439,14 @@ def hotkey_worker():
     try:
         user32 = ctypes.windll.user32
         HOTKEY_ID = 1001
-        # fsModifiers = MOD_ALT (1) | MOD_CONTROL (2) | MOD_SHIFT (4) | MOD_WIN (8) = 15 (0x0F)
-        # VK_M = 0x4D (77)
-        if user32.RegisterHotKey(None, HOTKEY_ID, 15, 0x4D):
+        # MOD_ALT(1) | MOD_CONTROL(2) | MOD_SHIFT(4) | MOD_WIN(8) | MOD_NOREPEAT(0x4000) = 0x400F (16400)
+        # 左右の修飾キー(L-Win/L-Ctrl/L-Alt/L-Shift 等)のどちらが送信されてもWindowsが確実に認識するように設定
+        registered = user32.RegisterHotKey(None, HOTKEY_ID, 0x400F, 0x4D)
+        if not registered:
+            # バックアップ：MOD_NOREPEAT なしの 15 (0x0F) で再試行
+            registered = user32.RegisterHotKey(None, HOTKEY_ID, 15, 0x4D)
+            
+        if registered:
             print(f"{get_timestamp()} [システム] グローバルホットキー登録完了: [Win + Ctrl + Shift + Alt + M] (即時消灯)")
             msg = ctypes.wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
@@ -451,6 +456,8 @@ def hotkey_worker():
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
             user32.UnregisterHotKey(None, HOTKEY_ID)
+        else:
+            print(f"{get_timestamp()} [警告] グローバルホットキーの登録に失敗しました。他のアプリと競合している可能性があります。")
     except Exception as e:
         print(f"[警告] ホットキー監視スレッドでエラーが発生しました: {e}")
 
