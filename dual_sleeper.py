@@ -848,66 +848,72 @@ def main():
 
     try:
         while True:
-            # ===== グローバルホットキー (Win + Ctrl + Shift + Alt + M) トリガー判定 =====
-            if hotkey_state2_triggered:
-                hotkey_state2_triggered = False
-                print(f"\n{get_timestamp()} [ホットキー] HyperKey [Win+Ctrl+Shift+Alt+M] を検知しました。即座にモニターを消灯し「消灯状態 (State 2)」へ遷移します。")
-                turn_off_monitor()
-                time.sleep(1.0)
-                state = 2
-                monitor_off_input_time = get_last_input_time_raw()
-                last_mouse_x, last_mouse_y = get_mouse_position()
-                low_net_standby_start_time = None
-                time.sleep(config['check_interval_seconds'])
-                continue
+            # 5秒の監視ループを 0.1秒単位の超爆速ループに分割し、キーレスポンスを向上
+            check_interval = config.get('check_interval_seconds', 5)
+            sub_loops = int(check_interval / 0.1)
+            
+            for _ in range(max(1, sub_loops)):
+                # ===== グローバルホットキー (Win + Ctrl + Shift + Alt + M) トリガー判定 =====
+                if hotkey_state2_triggered:
+                    hotkey_state2_triggered = False
+                    print(f"\n{get_timestamp()} [ホットキー] HyperKey [Win+Ctrl+Shift+Alt+M] を検知しました。即座にモニターを消灯し「消灯状態 (State 2)」へ遷移します。")
+                    turn_off_monitor()
+                    time.sleep(1.0)
+                    state = 2
+                    monitor_off_input_time = get_last_input_time_raw()
+                    last_mouse_x, last_mouse_y = get_mouse_position()
+                    low_net_standby_start_time = None
+                    break # インナーループを出てメイン処理へ
 
-            # 常に非同期でローカルのキーボード入力をチェック
-            while msvcrt.kbhit():
-                try:
-                    char_code = msvcrt.getch()
-                    if char_code in (b'\x00', b'\xe0'):
-                        msvcrt.getch()
-                        continue
-                    ch = char_code.decode("utf-8").lower()
-                    
-                    if ch == "h":
-                        # 電源手動予約のトグル切り替え (None -> sleep -> hibernate -> None)
-                        next_power_modes = {
-                            None: "sleep",
-                            "sleep": "hibernate",
-                            "hibernate": None
-                        }
-                        force_power_mode = next_power_modes.get(force_power_mode, None)
+                # 常に非同期でローカルのキーボード入力をチェック (即時反映)
+                while msvcrt.kbhit():
+                    try:
+                        char_code = msvcrt.getch()
+                        if char_code in (b'\x00', b'\xe0'):
+                            msvcrt.getch()
+                            continue
+                        ch = char_code.decode("utf-8").lower()
                         
-                        if force_power_mode == "sleep":
-                            print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「スタンバイ (スリープ)」を実行します。(復帰時にリセット)")
-                        elif force_power_mode == "hibernate":
-                            print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「休止状態 (ハイバネート)」を実行します。(復帰時にリセット)")
-                        else:
-                            print(f"\n{get_timestamp()} [手動予約] 予約された電源モードを解除しました。(通常設定の時間帯制御に戻ります)")
+                        if ch == "h":
+                            # 電源手動予約のトグル切り替え (None -> sleep -> hibernate -> None)
+                            next_power_modes = {
+                                None: "sleep",
+                                "sleep": "hibernate",
+                                "hibernate": None
+                            }
+                            force_power_mode = next_power_modes.get(force_power_mode, None)
                             
-                    elif ch == "s":
-                        # サーバモード設定のトグル切り替え (off -> desktop -> always -> off)
-                        config = load_config()
-                        current_mode = get_server_mode_type(config)
-                        next_server_modes = {
-                            "off": "desktop",
-                            "desktop": "always",
-                            "always": "off"
-                        }
-                        next_mode = next_server_modes.get(current_mode, "off")
-                        
-                        config["server_mode"] = next_mode
-                        save_config(config)
-                        
-                        mode_labels = {
-                            "off": "オフ (通常運用)",
-                            "desktop": "デスクトップ時のみ有効",
-                            "always": "常時適用"
-                        }
-                        print(f"\n{get_timestamp()} [設定変更] サーバモードを「{mode_labels[next_mode]}」に変更しました。")
-                except Exception:
-                    pass
+                            if force_power_mode == "sleep":
+                                print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「スタンバイ (スリープ)」を実行します。(復帰時にリセット)")
+                            elif force_power_mode == "hibernate":
+                                print(f"\n{get_timestamp()} [手動予約] 次回スリープ移行時、強制的に「休止状態 (ハイバネート)」を実行します。(復帰時にリセット)")
+                            else:
+                                print(f"\n{get_timestamp()} [手動予約] 予約された電源モードを解除しました。(通常設定の時間帯制御に戻ります)")
+                                
+                        elif ch == "s":
+                            # サーバモード設定のトグル切り替え (off -> desktop -> always -> off)
+                            config = load_config()
+                            current_mode = get_server_mode_type(config)
+                            next_server_modes = {
+                                "off": "desktop",
+                                "desktop": "always",
+                                "always": "off"
+                            }
+                            next_mode = next_server_modes.get(current_mode, "off")
+                            
+                            config["server_mode"] = next_mode
+                            save_config(config)
+                            
+                            mode_labels = {
+                                "off": "オフ (通常運用)",
+                                "desktop": "デスクトップ時のみ有効",
+                                "always": "常時適用"
+                            }
+                            print(f"\n{get_timestamp()} [設定変更] サーバモードを「{mode_labels[next_mode]}」に変更しました。")
+                    except Exception:
+                        pass
+                
+                time.sleep(0.1)
 
             # 常にネットワーク速度を更新しておく（正確な差分計測のため）
             speed = net_monitor.get_speed()
@@ -1020,8 +1026,6 @@ def main():
                 
                 mode_status = f" | 予約: {force_power_mode.upper() if force_power_mode else 'なし'}"
                 print(f"\r{get_timestamp()} [メディア強制点灯中] 残り時間: {int(media_force_on_until - current_time)}秒 | 通信: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
-                
-                time.sleep(config['check_interval_seconds'])
                 continue
             elif media_force_on_until > 0:
                 # ちょうど10分が満了した瞬間
@@ -1056,7 +1060,6 @@ def main():
                 monitor_off_input_time = get_last_input_time_raw()
                 last_mouse_x, last_mouse_y = get_mouse_position()
                 low_net_standby_start_time = None
-                time.sleep(config['check_interval_seconds'])
                 continue
             
             if state == 0:
@@ -1409,11 +1412,6 @@ def main():
                             print(f"\r{get_timestamp()} [モニターOFF] 配信/高速DL保護中... | 通信: {speed:.1f} KB/s (高トラフィック)  ", end="", flush=True)
                         else:
                             print(f"\r{get_timestamp()} [モニターOFF] 通信待機中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
-                else:
-                    # スリープ無効時の静か待機
-                    pass
-
-            time.sleep(config['check_interval_seconds'])
 
     except KeyboardInterrupt:
         print("\n監視プログラムを終了しました。")
