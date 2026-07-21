@@ -75,6 +75,7 @@ current_net_speed = 0.0
 current_low_net_sec = 0.0
 current_gpu_util = 0
 current_media_force_until = 0.0
+current_status_reason = "通常"
 telegram_offset = 0
 
 # Telegram割り込みスリープ延長用グローバル変数
@@ -536,7 +537,7 @@ def hotkey_worker():
 def telegram_worker(bot_token, chat_id, pc_name):
     """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
     global force_power_mode, telegram_offset
-    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util, current_media_force_until
+    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
     global is_sleep_pending, telegram_extend_request
     
     if not bot_token or not chat_id:
@@ -653,7 +654,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             )
                             print(f"\n{get_timestamp()} [リモート予約] Telegramから電源予約変更を受信: {str(force_power_mode).upper()}")
                     
-                    # 2. status コマンドのハンドリング（メディア強制点灯の表示拡張）
+                    # 2. status コマンドのハンドリング（判定状態の表示拡張）
                     elif cmd in ("/status", "status"):
                         state_names = {0: "通常状態 (State 0)", 1: "通信監視中 (State 1)", 2: "消灯中 (State 2)"}
                         state_str = state_names.get(current_state_num, "不明")
@@ -685,6 +686,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         reply_text = (
                             f"📊 **[{pc_name}] 現在のステータス**\n"
                             f"·状態: {state_str}\n"
+                            f"·判定: `{current_status_reason}`\n"
                             f"·無操作時間: {current_idle_sec:.1f} 秒\n"
                             f"·通信速度: {current_net_speed:.1f} KB/s\n"
                             f"·低通信継続: {current_low_net_sec:.1f} 秒\n"
@@ -757,7 +759,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 
 def main():
     global force_power_mode
-    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util, current_media_force_until
+    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
     global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered, last_hotkey_time
 
     # 簡易編集モードを無効化
@@ -1146,6 +1148,7 @@ def main():
                 current_net_speed = speed
                 current_low_net_sec = 0.0
                 current_media_force_until = media_force_on_until
+                current_status_reason = "🎬 メディア/登録タイトル再生中"
                 
                 # GPUステータスの更新
                 gpu_limit = config.get("gpu_limit_percent", 0)
@@ -1182,14 +1185,34 @@ def main():
             else:
                 current_low_net_sec = 0.0
 
-            # グローバルステータスの更新（Telegramスレッドへのリアルタイム情報共有用）
-            current_state_num = state
-            current_idle_sec = idle_sec
-            current_net_speed = speed
+            # GPUステータス測定
             gpu_limit = config.get("gpu_limit_percent", 0)
             gpu_procs = config.get("gpu_protect_processes", [])
             gpu_util, gpu_protect_active = get_gpu_status(gpu_procs)
             current_gpu_util = gpu_util
+
+            # 判定状態(current_status_reason)の動的算出（Telegram/コンソール共通）
+            is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
+            high_net_limit = config.get("high_network_limit_kbs", 625.0)
+            normal_net_limit = config.get("network_limit_kbs", 20.0)
+
+            if is_gpu_busy_with_python:
+                current_status_reason = f"🤖 AI利用中 (Python GPU: {gpu_util}%)"
+            elif speed >= high_net_limit:
+                current_status_reason = f"📡 ゲーム配信中 (高トラフィック: {speed:.1f} KB/s)"
+            elif state == 2 and speed > normal_net_limit:
+                current_status_reason = f"🔄 パルス通信検知 ({speed:.1f} KB/s)"
+            elif state == 2:
+                current_status_reason = f"🎮 ゲーム放置中 (スリープ待機)"
+            elif state == 1:
+                current_status_reason = f"🔍 通信監視中 (低通信待機)"
+            else:
+                current_status_reason = f"💻 通常稼働中"
+
+            # グローバルステータスの更新
+            current_state_num = state
+            current_idle_sec = idle_sec
+            current_net_speed = speed
             
             # 【共通の割り込み処理】長時間の無操作で強制モニターオフにする判定
             force_off_limit = config.get("force_monitor_off_idle_seconds", 0)
@@ -1320,13 +1343,11 @@ def main():
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 if standby_limit > 0:
-                    # 高トラフィック（配信など）のしきい値を取得
-                    high_net_limit = config.get("high_network_limit_kbs", 625.0)
-                    normal_net_limit = config.get("network_limit_kbs", 20.0)
-                    
-                    # 消灯中に Immich 操作等のパルス通信（通常通信しきい値 20 KB/s 超え）を検知した場合
+                    # 消灯中にパルス通信（通常通信しきい値 20 KB/s 超え）を検知した場合
                     # スリープ待機タイマーを即座にリセット（0秒に戻し、再び5分間の猶予を確保する）
                     if speed > normal_net_limit:
+                        if low_net_standby_start_time is not None:
+                            print(f"\n{get_timestamp()} [タイマーリセット] 🔄 パルス通信 ({speed:.1f} KB/s) を検知したためスリープタイマーをリセットしました。")
                         low_net_standby_start_time = time.time()
 
                     # ファイルダウンロード中であるかチェック
@@ -1337,7 +1358,6 @@ def main():
                     
                     # 【スリープを許可する条件】
                     # ※GPUは前段で測定した値をそのまま流用（PythonによるGPU高負荷中のみ保護）
-                    is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
                     allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep)
                     
                     # 【リretry中の10分継続警告チェック】
@@ -1356,7 +1376,7 @@ def main():
                             low_net_standby_start_time = time.time()
                         
                         elapsed_low_net_standby = time.time() - low_net_standby_start_time
-                        print(f"\r{get_timestamp()} [モニターOFF] スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒 | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
+                        print(f"\r{get_timestamp()} [モニターOFF] 🎮 ゲーム放置中(スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         
                         # スリープ状態での終了時、予約ログを出力
                         if force_power_mode:
@@ -1396,7 +1416,7 @@ def main():
                                     config,
                                     f"🔔 **[{pc_name}] まもなく {mode_name} に移行します。**\n"
                                     f"({mode_desc})\n"
-                                    f"スマホから何か文字・数字を送信すると、移行を一時的に10分間延長（モニター消灯維持）します。{wol_msg_part}"
+                                    f"スマホから何か文字・数字を送信すると、移行を一時的に10分間延長（モニター消灯状態維持）します。{wol_msg_part}"
                                 )
                                 
                                 # 猶予期間中の割り込み（操作検知）の監視
@@ -1546,23 +1566,23 @@ def main():
                         # 通信量上昇、GPU高負荷、ダウンロード中、またはスリープ禁止時間帯によるリセット
                         if low_net_standby_start_time is not None:
                             if is_no_sleep:
-                                print(f"\n{get_timestamp()} [情報] スリープ禁止時間帯（{config.get('no_sleep_start_hour')}時〜{config.get('no_sleep_end_hour')}時）のためスリープタイマーをリセットします。")
+                                print(f"\n{get_timestamp()} [情報] スリープ禁止時間帯のためスリープタイマーをリセットします。")
                             elif is_gpu_busy_with_python:
-                                print(f"\n{get_timestamp()} [情報] LoRA学習中(python高負荷)を検知したためスリープタイマーをリセットします。GPU: {gpu_util}%")
+                                print(f"\n{get_timestamp()} [情報] 🤖 AI利用中 (Python GPU: {gpu_util}%) を検知したためスリープタイマーをリセットします。")
                             elif is_downloading:
                                 print(f"\n{get_timestamp()} [情報] ファイルダウンロード中を検知したためスリープタイマーをリセットします。")
                             elif speed >= high_net_limit:
-                                print(f"\n{get_timestamp()} [情報] 高トラフィック(配信または高速DL: {speed:.1f} KB/s)を検知したためスリープタイマーをリセットします。")
+                                print(f"\n{get_timestamp()} [情報] 📡 ゲーム配信中 (高トラフィック: {speed:.1f} KB/s) を検知したためスリープタイマーをリセットします。")
                         low_net_standby_start_time = None
                         
                         if is_no_sleep:
                             print(f"\r{get_timestamp()} [モニターOFF] スリープ禁止時間帯(モニター消灯のみ維持)... | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif is_gpu_busy_with_python:
-                            print(f"\r{get_timestamp()} [モニターOFF] LoRA学習保護中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}% (python)  ", end="", flush=True)
+                            print(f"\r{get_timestamp()} [モニターOFF] 🤖 AI利用中 (Python GPU: {gpu_util}%) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif is_downloading:
                             print(f"\r{get_timestamp()} [モニターOFF] ファイルダウンロード中... | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif speed >= high_net_limit:
-                            print(f"\r{get_timestamp()} [モニターOFF] 配信/高速DL保護中... | 通信: {speed:.1f} KB/s (高トラフィック)  ", end="", flush=True)
+                            print(f"\r{get_timestamp()} [モニターOFF] 📡 ゲーム配信中 (高トラフィック: {speed:.1f} KB/s) | 通信待機  ", end="", flush=True)
                         else:
                             print(f"\r{get_timestamp()} [モニターOFF] 通信待機中... | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
 
