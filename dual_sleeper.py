@@ -1296,7 +1296,13 @@ def main():
                 if standby_limit > 0:
                     # 高トラフィック（配信など）のしきい値を取得
                     high_net_limit = config.get("high_network_limit_kbs", 625.0)
+                    normal_net_limit = config.get("network_limit_kbs", 20.0)
                     
+                    # 消灯中に Immich 操作等のパルス通信（通常通信しきい値 20 KB/s 超え）を検知した場合
+                    # スリープ待機タイマーを即座にリセット（0秒に戻し、再び5分間の猶予を確保する）
+                    if speed > normal_net_limit:
+                        low_net_standby_start_time = time.time()
+
                     # ファイルダウンロード中であるかチェック
                     is_downloading = is_downloading_active(downloads_dir)
                     
@@ -1304,7 +1310,7 @@ def main():
                     is_no_sleep = is_no_sleep_time(config.get("no_sleep_start_hour"), config.get("no_sleep_end_hour"))
                     
                     # 【スリープを許可する条件】
-                    # ※GPUは前段で測定した値をそのまま流用
+                    # ※GPUは前段で測定した値をそのまま流用（PythonによるGPU高負荷中のみ保護）
                     is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
                     allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep)
                     
