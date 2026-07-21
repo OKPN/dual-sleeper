@@ -42,7 +42,7 @@
 
 ### 🔗 2. 【WoL連携】スリープ通知からスマホ1タップで遠隔起動
 *   **Wake on LAN (WoL) 遠隔起動リンクの埋め込み:**
-    `config.json` の `"wol_url"` に Web WoL サービス（例: **[etherwake.f5.si](https://etherwake.f5.si)** など）のURLを設定しておくと、スマホに届くスリープ予告通知の最下部に「WoL遠隔起動リンク」が自動挿入されます。
+    `config.json` の `"wol_url"` に Web WoL サービス（例: **[etherwake.k7m.f5.si](https://etherwake.k7m.f5.si)** など）のURLを設定しておくと、スマホに届くスリープ予告通知の最下部に「WoL遠隔起動リンク」が自動挿入されます。
 *   外出先やベッドの中から、通知内のリンクをタップするだけでスリープしたPCを瞬時に遠隔起動できます。
 
 ### 📊 3. 【通信統計】スパイクに騙されない「中央値 (Median)」計測
@@ -70,13 +70,13 @@
 
 **Dual Sleeper** は、**WoL (Wake on LAN)** 技術と組み合わせることで、電気代を極限まで節約した完璧な「プライベート・リモート開発サーバー / リモートPC」を構築することができます。
 
-### 🌐 おすすめの Web WoL サービス: etherwake.f5.si
-Web上で簡単に WoL マジックパケットを送信できる無料サービス **[etherwake.f5.si](https://etherwake.f5.si)** などを活用するのが便利です。
+### 🌐 おすすめの Web WoL サービス: etherwake.k7m.f5.si
+Web上で簡単に WoL マジックパケットを送信できる無料サービス **[etherwake.k7m.f5.si](https://etherwake.k7m.f5.si)** などを活用するのが便利です。
 
 1.  **`config.json` への設定方法:**
-    `https://etherwake.f5.si` 等で生成した自身の起動用URLを `config.json` の `"wol_url"` 欄に登録します。
+    `https://etherwake.k7m.f5.si` 等で生成した自身の起動用URLを `config.json` の `"wol_url"` 欄に登録します。
     ```json
-    "wol_url": "https://etherwake.f5.si/?data=..."
+    "wol_url": "https://etherwake.k7m.f5.si/?data=..."
     ```
 2.  **スマホ通知からのワンタップ起動:**
     PCがスリープに入る直前、スマホに届くTelegram通知の最下部に上記のWoLリンクが自動的に掲載されます。
@@ -112,5 +112,5 @@ Web上で簡単に WoL マジックパケットを送信できる無料サービ
 | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
 | `telegram_bot_token` | `""` | トークン | Telegram Bot API Token。 |
 | `telegram_chat_id` | `""` | ID | Telegram 宛先チャットID。 |
-| `wol_url` | `""` | URL | スリープ通知内に自動挿入する Wake on LAN 遠隔起動リンク（例: **`https://etherwake.f5.si`** 等のWeb WoL URL）。 |
+| `wol_url` | `""` | URL | スリープ通知内に自動挿入する Wake on LAN 遠隔起動リンク（例: **`https://etherwake.k7m.f5.si`** 等のWeb WoL URL）。 |
 | `sleep_pending_seconds` | `30` | 秒 | スリープ予告通知後の猶予時間。 |
