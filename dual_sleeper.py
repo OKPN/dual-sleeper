@@ -21,6 +21,33 @@ class LASTINPUTINFO(ctypes.Structure):
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
+# XInput (コントローラー入力) 構造体定義
+class XINPUT_GAMEPAD(ctypes.Structure):
+    _fields_ = [
+        ("wButtons", ctypes.c_ushort),
+        ("bLeftTrigger", ctypes.c_ubyte),
+        ("bRightTrigger", ctypes.c_ubyte),
+        ("sThumbLX", ctypes.c_short),
+        ("sThumbLY", ctypes.c_short),
+        ("sThumbRX", ctypes.c_short),
+        ("sThumbRY", ctypes.c_short),
+    ]
+
+class XINPUT_STATE(ctypes.Structure):
+    _fields_ = [
+        ("dwPacketNumber", ctypes.c_ulong),
+        ("Gamepad", XINPUT_GAMEPAD),
+    ]
+
+# XInput DLLの安全な読み込み
+xinput_dll = None
+for dll_name in ["xinput1_4.dll", "xinput9_1_0.dll", "xinput1_3.dll"]:
+    try:
+        xinput_dll = ctypes.windll.LoadLibrary(dll_name)
+        break
+    except Exception:
+        pass
+
 # GUIDの定義 (Downloadsフォルダの自動取得用)
 class GUID(ctypes.Structure):
     _fields_ = [
@@ -56,6 +83,9 @@ telegram_extend_request = False
 hotkey_state2_triggered = False
 last_hotkey_time = 0.0
 
+# コントローラー前回のパケット番号記憶用辞書 (プレイヤー0〜3)
+last_xinput_packets = {}
+
 def get_idle_duration():
     """最後にマウス・キーボード操作があってからの経過時間（秒）を取得します。"""
     lii = LASTINPUTINFO()
@@ -66,6 +96,33 @@ def get_idle_duration():
         millis = (tick_count - lii.dwTime) & 0xFFFFFFFF
         return millis / 1000.0
     return 0.0
+
+def check_controller_activity():
+    """
+    接続されているゲームコントローラー(XInput)の入力をチェックし、
+    操作が行われた場合は True を返します。
+    """
+    global xinput_dll, last_xinput_packets
+    if not xinput_dll:
+        return False
+
+    activity_detected = False
+    state = XINPUT_STATE()
+
+    # 最大4台のコントローラーをチェック
+    for i in range(4):
+        try:
+            res = xinput_dll.XInputGetState(i, ctypes.byref(state))
+            if res == 0:  # ERROR_SUCCESS (接続中)
+                pkt = state.dwPacketNumber
+                prev_pkt = last_xinput_packets.get(i, None)
+                if prev_pkt is not None and pkt != prev_pkt:
+                    activity_detected = True
+                last_xinput_packets[i] = pkt
+        except Exception:
+            pass
+
+    return activity_detected
 
 def get_last_input_time_raw():
     """最後の入力イベントのタイムスタンプ（TickCount）を取得します。"""
@@ -769,6 +826,12 @@ def main():
     # モニター復帰マウス移動距離しきい値の出力
     print(f"  ・モニター復帰マウス距離: {config.get('wakeup_mouse_distance_px', 100)} px (大きく動かした時のみ復帰)")
     
+    # コントローラー入力監視状態の出力
+    if xinput_dll:
+        print("  ・コントローラー監視  : 有効 (XInput非同期チェック機能付き)")
+    else:
+        print("  ・コントローラー監視  : 非対応 (XInput DLL未検出)")
+    
     # 復帰後の設定出力
     print(f"  ・復帰後判定猶予時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (OSノイズ回避用)")
     print(f"  ・復帰判断アクティブ値: {config.get('wakeup_active_threshold_seconds', 5)} 秒 (猶予終了時の判定しきい値)")
@@ -826,6 +889,7 @@ def main():
     low_net_standby_start_time = None
     monitor_off_input_time = None
     last_wakeup_time = time.time()
+    last_controller_input_time = 0.0
     
     # リトライ制御用変数
     is_retrying = False # スリープ失敗時のリretry中フラグ
@@ -855,6 +919,10 @@ def main():
             sub_loops = int(check_interval / 0.1)
             
             for _ in range(max(1, sub_loops)):
+                # コントローラー(XInput)の操作検知をリアルタイムチェック
+                if check_controller_activity():
+                    last_controller_input_time = time.time()
+
                 # ===== グローバルホットキー (Win + Ctrl + Shift + Alt + M) トグル判定 =====
                 if hotkey_state2_triggered:
                     hotkey_state2_triggered = False
@@ -936,7 +1004,7 @@ def main():
             # 常にネットワーク速度を更新しておく（正確な差分計測のため）
             speed = net_monitor.get_speed()
             
-            # 物理的な無操作時間を取得し、最後のアクティブ時刻を計算
+            # 物理的な無操作時間（キーボード・マウス）を取得
             physical_idle = get_idle_duration()
             current_time = time.time()
             physical_active_time = current_time - physical_idle
@@ -1055,8 +1123,8 @@ def main():
                 print(f"\n{get_timestamp()} [状態遷移] メディア強制点灯時間が終了しました。放置の可能性があるため、通信監視状態（State 1）へダイレクト移行します。")
                 continue
 
-            # 物理入力の時刻と、モニター復帰時刻 of いずれか新しい方を最終アクティブ時刻とする
-            effective_active_time = max(physical_active_time, last_wakeup_time)
+            # 物理入力(KB/マウス/コントローラー)の時刻と、モニター復帰時刻の最も新しいものを最終アクティブ時間とする
+            effective_active_time = max(physical_active_time, last_wakeup_time, last_controller_input_time)
             idle_sec = current_time - effective_active_time
             
             # グローバルステータスの更新（Telegramスレッドへのリアルタイム情報共有用）
@@ -1197,7 +1265,7 @@ def main():
 
                 # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
                 if standby_limit > 0:
-                    # 高トラフィック（配信など）のしきいを取得
+                    # 高トラフィック（配信など）のしきい値を取得
                     high_net_limit = config.get("high_network_limit_kbs", 625.0)
                     
                     # ファイルダウンロード中であるかチェック
