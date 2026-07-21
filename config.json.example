@@ -1,84 +1,35 @@
 {
-  // 通常時の無操作判定しきい値（秒）
   "idle_limit_seconds": 120,
-
-  // スリープ移行を防止する network 帯域幅しきい値（KB/s）
   "network_limit_kbs": 20.0,
-
-  // 消灯判定に進むために低通信状態が継続する必要がある監視時間（秒）
+  "high_network_limit_kbs": 625.0,
   "network_check_duration_seconds": 60,
-
-  // 状態監視のループ処理間隔（秒）
   "check_interval_seconds": 5,
-
-  // モニター消灯（State 2）してからシステムがスリープするまでの遅延時間（秒）
   "standby_after_monitor_off_seconds": 300,
-
-  // 夜間スリープの代わりに休止状態（ハイバネート）を適用する開始時刻（時: 0〜23）
-  "hibernate_start_hour": 0,
-
-  // 夜間スリープの代わりに休止状態（ハイバネート）を適用する終了時刻（時: 0〜23）
-  "hibernate_end_hour": 0,
-
-  // スリープ移行自体を禁止し、モニター消灯のみを許可する時間帯の開始時刻（時: 0〜23）
+  "hibernate_start_hour": 3,
+  "hibernate_end_hour": 10,
   "no_sleep_start_hour": 0,
-
-  // スリープ移行自体を禁止し、モニター消灯のみを許可する時間帯の終了時刻（時: 0〜23）
   "no_sleep_end_hour": 0,
-
-  // 長時間無操作の際、通信量やGPU等の状態を問わずモニターを強制消灯するしきい値（秒、0で無効）
   "force_monitor_off_idle_seconds": 900,
-
-  // スリープ前後の通知を送るためのDiscordのWebhook URL（空文字で無効）
-  "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
-
-  // Telegram遠隔制御・通知用のBot Token（空文字で無効）
-  "telegram_bot_token": "YOUR_TELEGRAM_BOT_TOKEN_HERE",
-
-  // コマンドを受信・通知するTelegramのChat ID（空文字で無効）
-  "telegram_chat_id": "YOUR_TELEGRAM_CHAT_ID_HERE",
-
-  // スリープ実行直前にスマホに通知し、手動キャンセルを受け付ける猶予時間（秒）
+  "discord_webhook_url": "",
+  "telegram_bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+  "telegram_chat_id": "YOUR_TELEGRAM_CHAT_ID",
   "sleep_pending_seconds": 30,
-
-  // 消灯状態から復帰する際に必要なマウスの最小移動距離（ピクセル）
   "wakeup_mouse_distance_px": 100,
-
-  // スリープからPCが起動した直後に、OSのワープノイズ入力を無視する猶予時間（秒）
   "wakeup_mouse_grace_seconds": 20,
-
-  // スリープ復帰の猶予期間終了時、本当に人間が操作したかを判定する無操作時間しきい値（秒）
   "wakeup_active_threshold_seconds": 5,
-
-  // GPU保護（スリープ禁止）の対象とするプロセス名リスト（小文字・前方一致）
-  // pythonでのAI学習（PyTorch等）や、llama-server等のローカルLLM推論プロセスの名前を登録します
   "gpu_protect_processes": [
     "python.exe",
     "python",
     "llama-server.exe",
     "llama-server"
   ],
-
-  // GPU保護を発動させるGPU使用率のしきい値（%、0で無効）
   "gpu_limit_percent": 10,
-
-  // 配信視聴や高速ダウンロード等のアクティビティを保護する高トラフィックしきい値（KB/s）
-  "high_network_limit_kbs": 625.0,
-
-  // アクティブ（最前面）になった際に、自動的に強制点灯モード（スリープ防止）に入るウィンドウタイトルのキーワードリスト（空で無効）
-  // キーワードの横に「:分数」を入力することで、個別に保護時間を設定できます（空欄や未指定は10分）
   "keep_awake_window_titles": [
-    "youtube:20",   // YouTube視聴時は20分間スリープを防止
-    "twitch",        // Twitch視聴時はデフォルトの10分間スリープを防止
-    "zoom:60"        // Zoom会議中は60分間スリープを防止
+    "youtube:20",
+    "twitch",
+    "zoom:60"
   ],
-
-  // 高速消灯・サーバモードの設定（"off" / "desktop" / "always"）
-  //   "off"     : 通常運用（無効）
-  //   "desktop" : デスクトップ画面が表示されている時のみ有効（消灯判定を30秒+30秒に短縮）
-  //   "always"  : 画面の状態を問わず常時有効（どんなウインドウが出ていても強制的に30秒+30秒で消灯判定へ進む）
   "server_mode": "off",
-
-  // サーバーモード有効時、モニター消灯からシステムスリープに入るまでの遅延時間（秒）
-  "server_mode_standby_delay_seconds": 600
+  "server_mode_standby_delay_seconds": 600,
+  "wol_url": "https://your-wol-endpoint.workers.dev/?data=..."
 }

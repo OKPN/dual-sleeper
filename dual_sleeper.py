@@ -447,7 +447,8 @@ def load_config():
         "high_network_limit_kbs": 625.0,
         "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60"],
         "server_mode": "off",
-        "server_mode_standby_delay_seconds": 600
+        "server_mode_standby_delay_seconds": 600,
+        "wol_url": ""
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     if os.path.exists(config_path):
@@ -831,6 +832,13 @@ def main():
         print("  ・コントローラー監視  : 有効 (XInput非同期チェック機能付き)")
     else:
         print("  ・コントローラー監視  : 非対応 (XInput DLL未検出)")
+        
+    # WoL URLの設定出力
+    wol_link_url = config.get("wol_url", "").strip()
+    if wol_link_url:
+        print(f"  ・WoL遠隔起動リンク   : 設定済み ({wol_link_url[:40]}...)")
+    else:
+        print("  ・WoL遠隔起動リンク   : 未設定")
     
     # 復帰後の設定出力
     print(f"  ・復帰後判定猶予時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (OSノイズ回避用)")
@@ -1325,11 +1333,17 @@ def main():
                             # リトライ時ではない場合のみ、スマホへスリープ予告通知と猶予時間の監視を行う
                             if not is_retrying:
                                 print(f"\n{get_timestamp()} [スリープ予告] {pending_sec}秒後にシステムを {mode_name} に移行します。({mode_desc})")
+                                
+                                wol_link_url = config.get("wol_url", "").strip()
+                                wol_msg_part = ""
+                                if wol_link_url:
+                                    wol_msg_part = f"\n\n🔗 **[Wake on LAN 遠隔起動リンク]**\nPCを起こしたくなった場合は以下をタップ:\n{wol_link_url}"
+                                    
                                 send_notifications(
                                     config,
                                     f"🔔 **[{pc_name}] まもなく {mode_name} に移行します。**\n"
                                     f"({mode_desc})\n"
-                                    f"スマホから何か文字・数字を送信すると、移行を一時的に10分間延長（モニター消灯維持）します。"
+                                    f"スマホから何か文字・数字を送信すると、移行を一時的に10分間延長（モニター消灯維持）します。{wol_msg_part}"
                                 )
                                 
                                 # 猶予期間中の割り込み（操作検知）の監視
