@@ -951,6 +951,10 @@ def main():
                     # 1.5秒以内の連続・リピート入力を完全にガード（連打による「点灯➔即消灯」の防止）
                     if now_t - last_hotkey_time >= 1.5:
                         last_hotkey_time = now_t
+                        # 手動消灯の時はメディア強制点灯モードも完全に打ち切る
+                        media_force_on_until = 0
+                        last_detected_media_title = ""
+                        
                         if state == 2:
                             # 消灯中 (State 2) の場合は、モニターを確実に点灯し State 0 (通常状態) へ復帰
                             print(f"\n{get_timestamp()} [ホットキー] HyperKey 検知: モニターを点灯し「通常状態 (State 0)」へ復帰します。")
@@ -1036,7 +1040,7 @@ def main():
             current_title = get_active_window_title()
             has_media = any(ext in current_title for ext in media_extensions)
             
-            # config.json に登録された点灯維持タイトルのキーワード判定
+            # config.json に登録された点灯延長対象タイトルのキーワード判定
             keep_awake_kw = config.get("keep_awake_window_titles", [])
             has_custom_kw = False
             custom_duration = 600.0 # デフォルト10分 (600秒)
@@ -1071,7 +1075,10 @@ def main():
                     media_force_on_until = time.time() + target_duration
                     print(f"\n{get_timestamp()} [メディア/登録タイトル検知] 点灯延長対象（...{current_title[-40:]}）のオープンを検知しました。{int(target_duration // 60)}分間 ({int(target_duration)}秒) の強制点灯モードに入ります。")
             else:
-                # 非アクティブの時はクリア
+                # 対象ウィンドウが非アクティブ（閉じられた・別のウィンドウへ移動）の時はクリア
+                if media_force_on_until > 0 and (last_detected_media_title and last_detected_media_title not in current_title):
+                    print(f"\n{get_timestamp()} [状態遷移] 対象ウィンドウが閉じられたか非アクティブになったため、強制点灯モードを終了します。")
+                    media_force_on_until = 0
                 last_detected_media_title = ""
 
             # ===== 高速消灯・サーバモードにおける直接遷移判定 =====
@@ -1109,10 +1116,10 @@ def main():
             is_media_forced = (time.time() < media_force_on_until and media_force_on_until > 0)
             if is_media_forced:
                 # メディアウィンドウが非アクティブ化された（閉じられた、または別ウインドウへ切り替えられた）場合
-                # 最初に検知したファイルタイトルが現在のタイトルから消失したかをチェック
-                if last_detected_media_title not in current_title:
-                    print(f"\n{get_timestamp()} [状態遷移] メディアウィンドウの非アクティブ化（またはクローズ）を検知したため、強制点灯を打ち切り、通常監視（State 0）へ移行します。")
+                if not (has_media or has_custom_kw) or (last_detected_media_title and last_detected_media_title not in current_title):
+                    print(f"\n{get_timestamp()} [状態遷移] メディアウィンドウのクローズまたは非アクティブ化を検知したため、強制点灯を解除して通常監視（State 0）へ移行します。")
                     media_force_on_until = 0
+                    last_detected_media_title = ""
                     state = 0
                     last_wakeup_time = time.time()
                     net_monitor.get_speed()
@@ -1135,8 +1142,9 @@ def main():
                 print(f"\r{get_timestamp()} [メディア強制点灯中] 残り時間: {int(media_force_on_until - current_time)}秒 | 通信: {speed:.1f} KB/s{mode_status}  ", end="", flush=True)
                 continue
             elif media_force_on_until > 0:
-                # ちょうど10分が満了した瞬間
+                # ちょうど指定時間が満了した瞬間
                 media_force_on_until = 0 # タイマーをクリア
+                last_detected_media_title = ""
                 state = 1 # 直接「通信監視状態 (State 1)」へ遷移！
                 low_net_start_time = time.time() # 通信量の監視を開始
                 # 無操作時間はすでに満了しているものとして偽装（ダミー時刻セット）
