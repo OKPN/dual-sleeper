@@ -8,7 +8,7 @@
   "idle_limit_seconds": 300,
 
   // 【ネットワーク設定】通信監視状態 (State 1) での「低通信」とみなす閾値 (KB/s)
-  "network_limit_kbs": 20.0,
+  "network_limit_kbs": 25.0,
 
   // 【ネットワーク設定】低通信状態が何秒続いたらモニターを消灯するか (秒)
   "network_check_duration_seconds": 30,

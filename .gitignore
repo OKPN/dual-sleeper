@@ -6,4 +6,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.pytest_cache/
+# 仮想環境ディレクトリを無視
+.venv/
+venv/
+env/
