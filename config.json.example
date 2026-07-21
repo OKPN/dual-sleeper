@@ -1,22 +1,41 @@
 {
+  // ==============================================================================
+  // Dual Sleeper 設定ファイル (config.json)
+  // コメント行 (// または #) は自動的に除去されて読み込まれます。
+  // ==============================================================================
+
+  // 【基本設定】通常状態 (State 0) での無操作判定時間 (秒)
   "idle_limit_seconds": 120,
+
+  // 【ネットワーク設定】通信監視状態 (State 1) での「低通信」とみなす閾値 (KB/s)
   "network_limit_kbs": 20.0,
-  "high_network_limit_kbs": 625.0,
+
+  // 【ネットワーク設定】低通信状態が何秒続いたらモニターを消灯するか (秒)
   "network_check_duration_seconds": 60,
+
+  // 【監視設定】メインループのチェック間隔 (秒)
   "check_interval_seconds": 5,
+
+  // 【システム設定】モニター消灯後 (State 2)、何秒後にPCをスタンバイ/休止状態にするか (秒)
+  // 0 に設定するとシステムスリープは実行せず、モニター消灯のみを行います。
   "standby_after_monitor_off_seconds": 300,
-  "hibernate_start_hour": 3,
-  "hibernate_end_hour": 10,
+
+  // 【夜間休止状態設定】指定した時間帯 (24時間表記) はスタンバイではなく「休止状態 (ハイバネート)」にします。
+  // 両方 0 の場合は無効化されます。(例: 0時〜7時の間は休止状態にする場合は 0 と 7)
+  "hibernate_start_hour": 0,
+  "hibernate_end_hour": 7,
+
+  // 【スリープ禁止時間帯設定】指定した時間帯はシステムスリープを行わず「モニター消灯のみ」にします。
+  // 両方 0 の場合は無効化されます。(例: 12時〜18時はスリープ禁止にする場合は 12 と 18)
   "no_sleep_start_hour": 0,
   "no_sleep_end_hour": 0,
-  "force_monitor_off_idle_seconds": 900,
-  "discord_webhook_url": "",
-  "telegram_bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
-  "telegram_chat_id": "YOUR_TELEGRAM_CHAT_ID",
-  "sleep_pending_seconds": 30,
-  "wakeup_mouse_distance_px": 100,
-  "wakeup_mouse_grace_seconds": 20,
-  "wakeup_active_threshold_seconds": 5,
+
+  // 【強制消灯設定】通信の有無を問わず、完全無操作が指定時間続いたら強制的にモニターをオフにします (秒)
+  // 0 に設定すると無効化されます。(例: 900 = 15分)
+  "force_monitor_off_idle_seconds": 0,
+
+  // 【GPU保護設定】NVIDIA GPU使用率が閾値(%)以上で、かつ対象プロセスが動いている場合はスリープを阻止します。
+  // LLMローカルサーバーやAI学習中の誤スリープを防止します。
   "gpu_protect_processes": [
     "python.exe",
     "python",
@@ -24,12 +43,46 @@
     "llama-server"
   ],
   "gpu_limit_percent": 10,
+
+  // 【配信・大容量通信保護設定】通信速度がこの閾値 (KB/s) 以上の場合はスリープを阻止します。
+  // 625.0 KB/s = 5.0 Mbps (Discord配信、YouTube/Twitch配信、高速ダウンロードの保護用)
+  "high_network_limit_kbs": 625.0,
+
+  // 【点灯延長タイトル設定】アクティブウィンドウのタイトルに以下のキーワードが含まれている場合、指定分数の点灯時間を延長します。
+  // 書式: "キーワード:延長分数" (分数を省略した場合はデフォルト10分)
   "keep_awake_window_titles": [
     "youtube:20",
     "twitch",
-    "zoom:60"
+    "zoom:60",
+    "obs:360"
   ],
+
+  // 【高速消灯サーバモード設定】
+  // "off"     : 通常運用 (120秒無操作 ➔ 60秒低通信 ➔ 消灯)
+  // "desktop" : デスクトップ表示時のみ高速消灯 (30秒無操作 ➔ 30秒低通信 ➔ 消灯)
+  // "always"  : 常時高速消灯 (30秒無操作 ➔ 30秒低通信 ➔ 消灯)
   "server_mode": "off",
+
+  // 【高速消灯サーバモード時のスリープ遅延設定】
+  // サーバモード適用時に、モニター消灯後何秒後にスリープするか (秒)
   "server_mode_standby_delay_seconds": 600,
-  "wol_url": "https://your-wol-endpoint.workers.dev/?data=..."
+
+  // 【通知設定】スリープ移行の予告や復帰を外部サービスに通知します。
+  "discord_webhook_url": "",
+  "telegram_bot_token": "",
+  "telegram_chat_id": "",
+
+  // 【通知後猶予設定】スリープ予告通知を送信してから、実際にスリープを実行するまでの猶予時間 (秒)
+  "sleep_pending_seconds": 30,
+
+  // 【Wake on LAN 設定】スリープ予告通知に添付する ワンタップ WoL 遠隔起動 URL
+  "wol_url": "",
+
+  // 【復帰判定設定】消灯状態 (State 2) からモニターをONに戻すためのマウス移動距離 (ピクセル)
+  // マウスの僅かな振動による誤復帰を防ぎ、大きく動かした時のみ点灯させます。
+  "wakeup_mouse_distance_px": 100,
+
+  // 【復帰直後ガード設定】スリープ復帰後、OSの内部ノイズを誤検知しないための猶予時間 (秒) と判定閾値 (秒)
+  "wakeup_mouse_grace_seconds": 20,
+  "wakeup_active_threshold_seconds": 5
 }

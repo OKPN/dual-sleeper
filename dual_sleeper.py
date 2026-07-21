@@ -448,7 +448,7 @@ def load_config():
         "gpu_protect_processes": ["python.exe", "python", "llama-server.exe", "llama-server"],
         "gpu_limit_percent": 10,
         "high_network_limit_kbs": 625.0,
-        "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60"],
+        "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60", "obs:360"],
         "server_mode": "off",
         "server_mode_standby_delay_seconds": 600,
         "wol_url": ""
