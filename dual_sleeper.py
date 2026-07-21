@@ -1462,10 +1462,21 @@ def main():
                                 if wol_link_url:
                                     wol_msg_part = f"\n\n🔗 **[Wake on LAN 遠隔起動リンク]**\nPCを起こしたくなった場合は以下をタップ:\n{wol_link_url}"
                                     
+                                # スリープ決定時点のState 2詳細ステータス文字列を作成
+                                status_details_msg = (
+                                    f"📊 **[決定時のステータス]**\n"
+                                    f"·判定: `{current_status_reason}`\n"
+                                    f"·通信速度: 中央値 {median_sp:.1f} KB/s (最高: {max_sp:.1f} KB/s)\n"
+                                    f"·低通信継続: {elapsed_low_net_standby:.1f} 秒 (待機完了)\n"
+                                    f"·GPU使用率: {gpu_util} %\n"
+                                    f"·電源予約: `{force_power_mode.upper() if force_power_mode else 'なし'}`"
+                                )
+
                                 send_notifications(
                                     config,
                                     f"🔔 **[{pc_name}] まもなく {mode_name} に移行します。**\n"
-                                    f"({mode_desc})\n"
+                                    f"({mode_desc})\n\n"
+                                    f"{status_details_msg}\n\n"
                                     f"スマホから何か文字・数字を送信すると、移行を一時的に10分間延長（モニター消灯状態維持）します。{wol_msg_part}"
                                 )
                                 
