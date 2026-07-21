@@ -536,11 +536,11 @@ def disable_quick_edit():
 def load_config():
     """設定ファイルを読み込みます。存在しない場合はデフォルト値を返します。"""
     default_config = {
-        "idle_limit_seconds": 10,
+        "idle_limit_seconds": 300,
         "network_limit_kbs": 20.0,
-        "network_check_duration_seconds": 10,
+        "network_check_duration_seconds": 30,
         "check_interval_seconds": 5,
-        "standby_after_monitor_off_seconds": 10,
+        "standby_after_monitor_off_seconds": 300,
         "hibernate_start_hour": 0,
         "hibernate_end_hour": 0,
         "no_sleep_start_hour": 0,

@@ -5,13 +5,13 @@
   // ==============================================================================
 
   // 【基本設定】通常状態 (State 0) での無操作判定時間 (秒)
-  "idle_limit_seconds": 120,
+  "idle_limit_seconds": 300,
 
   // 【ネットワーク設定】通信監視状態 (State 1) での「低通信」とみなす閾値 (KB/s)
   "network_limit_kbs": 20.0,
 
   // 【ネットワーク設定】低通信状態が何秒続いたらモニターを消灯するか (秒)
-  "network_check_duration_seconds": 60,
+  "network_check_duration_seconds": 30,
 
   // 【監視設定】メインループのチェック間隔 (秒)
   "check_interval_seconds": 5,
