@@ -72,7 +72,7 @@ force_power_mode = None
 current_state_num = 0
 current_idle_sec = 0.0
 current_net_speed = 0.0
-current_net_avg_speed = 0.0
+current_net_median_speed = 0.0
 current_net_max_speed = 0.0
 current_low_net_sec = 0.0
 current_gpu_util = 0
@@ -90,6 +90,18 @@ last_hotkey_time = 0.0
 
 # コントローラー前回のパケット番号記憶用辞書 (プレイヤー0〜3)
 last_xinput_packets = {}
+
+def calculate_median(data_list):
+    """通信速度データリストの中央値(Median)を計算して返します。"""
+    if not data_list:
+        return 0.0
+    sorted_list = sorted(data_list)
+    n = len(sorted_list)
+    mid = n // 2
+    if n % 2 == 1:
+        return sorted_list[mid]
+    else:
+        return (sorted_list[mid - 1] + sorted_list[mid]) / 2.0
 
 def get_idle_duration():
     """最後にマウス・キーボード操作があってからの経過時間（秒）を取得します。"""
@@ -540,7 +552,7 @@ def hotkey_worker():
 def telegram_worker(bot_token, chat_id, pc_name):
     """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
     global force_power_mode, telegram_offset
-    global current_state_num, current_idle_sec, current_net_speed, current_net_avg_speed, current_net_max_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
+    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
     global is_sleep_pending, telegram_extend_request
     
     if not bot_token or not chat_id:
@@ -657,7 +669,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             )
                             print(f"\n{get_timestamp()} [リモート予約] Telegramから電源予約変更を受信: {str(force_power_mode).upper()}")
                     
-                    # 2. status コマンドのハンドリング（平均・最高通信速度の表示拡張）
+                    # 2. status コマンドのハンドリング（中央値・最高通信速度の表示拡張）
                     elif cmd in ("/status", "status"):
                         state_names = {0: "通常状態 (State 0)", 1: "通信監視中 (State 1)", 2: "消灯中 (State 2)"}
                         state_str = state_names.get(current_state_num, "不明")
@@ -686,9 +698,9 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         else:
                             media_str = "なし"
                         
-                        # 通信速度テキスト（平均・最高表示）
+                        # 通信速度テキスト（中央値・最高表示）
                         if current_state_num in (1, 2) and current_low_net_sec > 0:
-                            net_str = f"平均 {current_net_avg_speed:.1f} KB/s (最高: {current_net_max_speed:.1f} KB/s)"
+                            net_str = f"中央値 {current_net_median_speed:.1f} KB/s (最高: {current_net_max_speed:.1f} KB/s)"
                         else:
                             net_str = f"{current_net_speed:.1f} KB/s (瞬間値)"
                         
@@ -768,7 +780,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 
 def main():
     global force_power_mode
-    global current_state_num, current_idle_sec, current_net_speed, current_net_avg_speed, current_net_max_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
+    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
     global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered, last_hotkey_time
 
     # 簡易編集モードを無効化
@@ -933,7 +945,7 @@ def main():
     last_wakeup_time = time.time()
     last_controller_input_time = 0.0
     
-    # 通信監視区間・消灯区間の速度統計（平均・最高計算用）
+    # 通信監視区間・消灯区間の速度統計（中央値・最高計算用）
     interval_speeds = []
     
     # リトライ制御用変数
@@ -1165,7 +1177,7 @@ def main():
                 current_state_num = 0
                 current_idle_sec = 0.0
                 current_net_speed = speed
-                current_net_avg_speed = speed
+                current_net_median_speed = speed
                 current_net_max_speed = speed
                 current_low_net_sec = 0.0
                 current_media_force_until = media_force_on_until
@@ -1198,10 +1210,10 @@ def main():
             effective_active_time = max(physical_active_time, last_wakeup_time, last_controller_input_time)
             idle_sec = current_time - effective_active_time
             
-            # 現在の低通信継続時間の計算および State 内での継続的な通信速度統計（平均・最高）の集計
+            # 現在の低通信継続時間の計算および State 内での継続的な通信速度統計（中央値・最高）の集計
             if state in (1, 2) and ((state == 1 and low_net_start_time is not None) or (state == 2 and low_net_standby_start_time is not None)):
                 interval_speeds.append(speed)
-                avg_sp = sum(interval_speeds) / len(interval_speeds) if interval_speeds else speed
+                median_sp = calculate_median(interval_speeds)
                 max_sp = max(interval_speeds) if interval_speeds else speed
                 
                 if state == 1:
@@ -1209,11 +1221,11 @@ def main():
                 else:
                     current_low_net_sec = time.time() - low_net_standby_start_time
             else:
-                avg_sp = speed
+                median_sp = speed
                 max_sp = speed
                 current_low_net_sec = 0.0
 
-            current_net_avg_speed = avg_sp
+            current_net_median_speed = median_sp
             current_net_max_speed = max_sp
 
             # GPUステータス測定
@@ -1340,7 +1352,7 @@ def main():
                     
                     elapsed_low_net = time.time() - low_net_start_time
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
-                    print(f"\r{get_timestamp()} [通信監視中] 低通信継続: {elapsed_low_net:.1f}/{net_check_duration}秒 | 平均通信: {avg_sp:.1f} KB/s (最高: {max_sp:.1f}){dl_status}  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 低通信継続: {elapsed_low_net:.1f}/{net_check_duration}秒 | 中央通信: {median_sp:.1f} KB/s (最高: {max_sp:.1f}){dl_status}  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
                     if elapsed_low_net >= net_check_duration:
@@ -1414,7 +1426,7 @@ def main():
                         
                         elapsed_low_net_standby = time.time() - low_net_standby_start_time
                         state_label = "🎮 ゲーム放置中" if gpu_util >= game_gpu_threshold else "💤 放置中"
-                        print(f"\r{get_timestamp()} [モニターOFF] {state_label}(スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒) | 平均通信: {avg_sp:.1f} KB/s (最高: {max_sp:.1f}) | GPU: {gpu_util}%  ", end="", flush=True)
+                        print(f"\r{get_timestamp()} [モニターOFF] {state_label}(スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒) | 中央通信: {median_sp:.1f} KB/s (最高: {max_sp:.1f}) | GPU: {gpu_util}%  ", end="", flush=True)
                         
                         # スリープ状態での終了時、予約ログを出力
                         if force_power_mode:
