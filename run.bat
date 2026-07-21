@@ -1,70 +1,39 @@
 @echo off
-cd /d "%~dp0"
-title Dual Sleeper
+title Dual Sleeper Launcher
 
-echo ==================================================
-echo  Dual Sleeper Launcher
-echo ==================================================
-echo.
+echo [DEBUG] Launcher started.
+echo [DEBUG] Current directory: %CD%
 
-REM 1. Check Python
-where python >nul 2>nul
-if %errorlevel% neq 0 (
-    echo [ERROR] Python was not found on your system!
-    echo Please install Python 3.8+ and make sure to check "Add Python to PATH".
+REM Check Python
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Python is not installed or not in PATH!
+    echo Please install Python 3.8 or higher.
     echo.
     pause
-    goto :eof
+    exit /b 1
 )
 
-REM 2. Clean broken .venv if any
-if exist ".venv" (
-    if not exist ".venv\Scripts\activate.bat" (
-        echo [INFO] Repairing virtual environment...
-        rmdir /s /q .venv >nul 2>&1
-    )
-)
-
-REM 3. Create .venv if not exists
-if not exist ".venv" (
-    echo Creating virtual environment (.venv)...
-    python -m venv .venv
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to create virtual environment.
-        echo Running directly with system Python...
-        goto :RUN_DIRECT
-    )
-)
-
-REM 4. Activate .venv
-if exist ".venv\Scripts\activate.bat" (
-    echo Activating virtual environment...
-    call .venv\Scripts\activate.bat
-)
-
-:RUN_DIRECT
-echo Installing required packages (psutil)...
-python -m pip install psutil
-
+REM Setup config.json
 if not exist "config.json" (
     if exist "config.json.example" (
-        echo Creating config.json from example...
+        echo [INFO] Creating config.json from example...
         copy config.json.example config.json >nul
     )
 )
 
+REM Try installing psutil
+echo [INFO] Checking dependencies (psutil)...
+python -m pip install psutil >nul 2>&1
+
 echo.
-echo Starting Dual Sleeper...
+echo [INFO] Starting Dual Sleeper script...
 echo ==================================================
 echo.
 
 python dual_sleeper.py
 
-if %errorlevel% neq 0 (
-    echo.
-    echo [ERROR] Application stopped unexpectedly with code %errorlevel%.
-)
-
 echo.
-echo Press any key to exit.
+echo [INFO] Program finished.
 pause
