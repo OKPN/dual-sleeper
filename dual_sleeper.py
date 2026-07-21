@@ -456,17 +456,27 @@ def load_config():
             with open(config_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
             
-            # コメント行(// や #)を除去してからJSONとして読み込む
             clean_lines = []
             for line in lines:
                 stripped = line.strip()
                 if stripped.startswith("//") or stripped.startswith("#"):
                     continue
-                if "//" in line:
-                    line = line.split("//")[0]
-                elif "#" in line:
-                    line = line.split("#")[0]
-                clean_lines.append(line)
+                
+                # 文字列リテラル内の // や # をコメントとして誤誤認しない堅牢な解析
+                in_string = False
+                clean_chars = []
+                i = 0
+                while i < len(line):
+                    ch = line[i]
+                    if ch == '"' and (i == 0 or line[i-1] != '\\'):
+                        in_string = not in_string
+                    elif not in_string and line[i:i+2] == "//":
+                        break
+                    elif not in_string and ch == '#':
+                        break
+                    clean_chars.append(ch)
+                    i += 1
+                clean_lines.append("".join(clean_chars))
                 
             config_content = "".join(clean_lines)
             config = json.loads(config_content)
