@@ -48,7 +48,7 @@ for dll_name in ["xinput1_4.dll", "xinput9_1_0.dll", "xinput1_3.dll"]:
     except Exception:
         pass
 
-# GUIDの定義 (Downloadsフォルダの自動取得用)
+# GUIDの定義 (Downloadsフォルダの自動取得およびWASAPI用)
 class GUID(ctypes.Structure):
     _fields_ = [
         ("Data1", ctypes.c_ulong),
@@ -90,6 +90,100 @@ last_hotkey_time = 0.0
 
 # コントローラー前回のパケット番号記憶用辞書 (プレイヤー0〜3)
 last_xinput_packets = {}
+
+def is_audio_session_active():
+    """
+    Windows Core Audio API (WASAPI) を ctypes 経由で呼び出し、
+    現在スピーカーまたはマイクでアクティブな音声セッション（Discord/LINE等の通話・音声再生）が存在するか判定します。
+    """
+    try:
+        # COM初期化
+        ctypes.windll.ole32.CoInitialize(None)
+
+        CLSID_MMDeviceEnumerator = GUID(0xBCDE0380, 0x1DED, 0x467C, (ctypes.c_ubyte * 8)(0x96, 0xC7, 0x4D, 0x61, 0x16, 0x09, 0x71, 0x35))
+        IID_IMMDeviceEnumerator = GUID(0xA95664D2, 0x9614, 0x4F35, (ctypes.c_ubyte * 8)(0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6))
+        IID_IAudioSessionManager2 = GUID(0x77AA99A0, 0x1BD6, 0x484F, (ctypes.c_ubyte * 8)(0x8B, 0xC7, 0x2C, 0x65, 0x4C, 0x9A, 0x9B, 0x6F))
+
+        # COM クラスインスタンス作成
+        enumerator = ctypes.c_void_p()
+        hr = ctypes.windll.ole32.CoCreateInstance(
+            ctypes.byref(CLSID_MMDeviceEnumerator),
+            None,
+            1, # CLSCTX_INPROC_SERVER
+            ctypes.byref(IID_IMMDeviceEnumerator),
+            ctypes.byref(enumerator)
+        )
+        if hr != 0 or not enumerator:
+            return False
+
+        # VTBL 経由で IMMDeviceEnumerator::GetDefaultAudioEndpoint を呼び出し
+        # eRender = 0 (スピーカー/出力), eCapture = 1 (マイク/入力), eConsole = 0
+        device = ctypes.c_void_p()
+        # GetDefaultAudioEndpoint is at index 4 in IMMDeviceEnumerator vtable
+        enum_vtable = ctypes.cast(enumerator, ctypes.POINTER(ctypes.c_void_p))[0]
+        get_default_endpoint = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
+            ctypes.cast(enum_vtable, ctypes.POINTER(ctypes.c_void_p))[4]
+        )
+        
+        # スピーカー(0) と マイク(1) の両方をチェック
+        is_active = False
+        for flow_type in (0, 1):
+            hr = get_default_endpoint(enumerator, flow_type, 0, ctypes.byref(device))
+            if hr == 0 and device:
+                # IMMDevice::Activate -> IAudioSessionManager2 (index 3 in IMMDevice vtable)
+                dev_vtable = ctypes.cast(device, ctypes.POINTER(ctypes.c_void_p))[0]
+                activate = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(GUID), ctypes.c_ulong, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))(
+                    ctypes.cast(dev_vtable, ctypes.POINTER(ctypes.c_void_p))[3]
+                )
+                session_mgr = ctypes.c_void_p()
+                hr_act = activate(device, ctypes.byref(IID_IAudioSessionManager2), 1, None, ctypes.byref(session_mgr))
+                
+                if hr_act == 0 and session_mgr:
+                    # IAudioSessionManager2::GetSessionEnumerator (index 5 in IAudioSessionManager2 vtable)
+                    mgr_vtable = ctypes.cast(session_mgr, ctypes.POINTER(ctypes.c_void_p))[0]
+                    get_session_enum = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))(
+                        ctypes.cast(mgr_vtable, ctypes.POINTER(ctypes.c_void_p))[5]
+                    )
+                    session_enum = ctypes.c_void_p()
+                    hr_enum = get_session_enum(session_mgr, ctypes.byref(session_enum))
+                    
+                    if hr_enum == 0 and session_enum:
+                        # IAudioSessionEnumerator::GetCount (index 3)
+                        enum_vt = ctypes.cast(session_enum, ctypes.POINTER(ctypes.c_void_p))[0]
+                        get_count = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))(
+                            ctypes.cast(enum_vt, ctypes.POINTER(ctypes.c_void_p))[3]
+                        )
+                        get_session = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
+                            ctypes.cast(enum_vt, ctypes.POINTER(ctypes.c_void_p))[4]
+                        )
+                        
+                        count = ctypes.c_int(0)
+                        if get_count(session_enum, ctypes.byref(count)) == 0:
+                            for idx in range(count.value):
+                                session_ctrl = ctypes.c_void_p()
+                                if get_session(session_enum, idx, ctypes.byref(session_ctrl)) == 0 and session_ctrl:
+                                    # IAudioSessionControl::GetState (index 3 in IAudioSessionControl vtable)
+                                    ctrl_vt = ctypes.cast(session_ctrl, ctypes.POINTER(ctypes.c_void_p))[0]
+                                    get_state = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))(
+                                        ctypes.cast(ctrl_vt, ctypes.POINTER(ctypes.c_void_p))[3]
+                                    )
+                                    state_val = ctypes.c_int(0)
+                                    if get_state(session_ctrl, ctypes.byref(state_val)) == 0:
+                                        # AudioSessionStateActive = 1
+                                        if state_val.value == 1:
+                                            is_active = True
+                                            ctypes.windll.ole32.CoTaskMemFree(session_ctrl)
+                                            break
+                                    ctypes.windll.ole32.CoTaskMemFree(session_ctrl)
+                        ctypes.windll.ole32.CoTaskMemFree(session_enum)
+                    ctypes.windll.ole32.CoTaskMemFree(session_mgr)
+                ctypes.windll.ole32.CoTaskMemFree(device)
+            if is_active:
+                break
+        ctypes.windll.ole32.CoTaskMemFree(enumerator)
+        return is_active
+    except Exception:
+        return False
 
 def calculate_median(data_list):
     """通信速度データリストの中央値(Median)を計算して返します。"""
@@ -878,6 +972,9 @@ def main():
     else:
         print("  ・コントローラー監視  : 非対応 (XInput DLL未検出)")
         
+    # WASAPI オーディオセッション監視の出力
+    print("  ・オーディオセッション監視: 有効 (WASAPI 通話/音声ストリーム保護)")
+        
     # WoL URLの設定出力
     wol_link_url = config.get("wol_url", "").strip()
     if wol_link_url:
@@ -1228,11 +1325,14 @@ def main():
             current_net_median_speed = median_sp
             current_net_max_speed = max_sp
 
-            # GPUステータス測定
+            # GPUステータスおよびWASAPIオーディオセッション測定
             gpu_limit = config.get("gpu_limit_percent", 0)
             gpu_procs = config.get("gpu_protect_processes", [])
             gpu_util, gpu_protect_active = get_gpu_status(gpu_procs)
             current_gpu_util = gpu_util
+
+            # WASAPI オーディオセッション（Discord/LINE等の通話・音声ストリーム）のチェック
+            is_audio_active = is_audio_session_active()
 
             # 判定状態(current_status_reason)の動的算出（Telegram/コンソール共通）
             is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
@@ -1244,6 +1344,8 @@ def main():
 
             if is_gpu_busy_with_python:
                 current_status_reason = f"🤖 AI利用中 (Python GPU: {gpu_util}%)"
+            elif is_audio_active and state == 2:
+                current_status_reason = f"🎙️ 通話/音声ストリーム検知中 (スリープ保護)"
             elif speed >= high_net_limit:
                 current_status_reason = f"📡 ゲーム配信中 (高トラフィック: {speed:.1f} KB/s)"
             elif state == 2 and speed > normal_net_limit:
@@ -1390,13 +1492,14 @@ def main():
                     extended_standby_limit = 0 # 復帰時は一時延長を解除
                     continue
 
-                # 2. スタンバイ判定のためのネットワーク監視およびGPU監視
+                # 2. スタンバイ判定のためのネットワーク監視、GPU監視、およびオーディオセッション監視
                 if standby_limit > 0:
-                    # 消灯中にパルス通信（通常通信しきい値 20 KB/s 超え）を検知した場合
+                    # 消灯中にパルス通信（通常通信しきい値 20 KB/s 超え）または WASAPI オーディオストリーム（通話等）を検知した場合
                     # スリープ待機タイマーを即座にリセット（0秒に戻し、再び5分間の猶予を確保する）
-                    if speed > normal_net_limit:
+                    if speed > normal_net_limit or is_audio_active:
                         if low_net_standby_start_time is not None:
-                            print(f"\n{get_timestamp()} [タイマーリセット] 🔄 パルス通信 ({speed:.1f} KB/s) を検知したためスリープタイマーをリセットしました。")
+                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 パルス通信 ({speed:.1f} KB/s)"
+                            print(f"\n{get_timestamp()} [タイマーリセット] {reason_str} を検知したためスリープタイマーをリセットしました。")
                         low_net_standby_start_time = time.time()
 
                     # ファイルダウンロード中であるかチェック
@@ -1406,8 +1509,8 @@ def main():
                     is_no_sleep = is_no_sleep_time(config.get("no_sleep_start_hour"), config.get("no_sleep_end_hour"))
                     
                     # 【スリープを許可する条件】
-                    # ※GPUは前段で測定した値をそのまま流用（PythonによるGPU高負荷中のみ保護）
-                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep)
+                    # ※オーディオセッションアクティブ中(is_audio_active) もスリープを阻害保護する
+                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep) and (not is_audio_active)
                     
                     # 【リretry中の10分継続警告チェック】
                     if is_retrying and retry_start_time is not None and not has_sent_10min_warning:
@@ -1628,6 +1731,8 @@ def main():
                         if low_net_standby_start_time is not None:
                             if is_no_sleep:
                                 print(f"\n{get_timestamp()} [情報] スリープ禁止時間帯のためスリープタイマーをリセットします。")
+                            elif is_audio_active:
+                                print(f"\n{get_timestamp()} [情報] 🎙️ 通話/音声ストリーム検知中のためスリープタイマーをリセットします。")
                             elif is_gpu_busy_with_python:
                                 print(f"\n{get_timestamp()} [情報] 🤖 AI利用中 (Python GPU: {gpu_util}%) を検知したためスリープタイマーをリセットします。")
                             elif is_downloading:
@@ -1638,6 +1743,8 @@ def main():
                         
                         if is_no_sleep:
                             print(f"\r{get_timestamp()} [モニターOFF] スリープ禁止時間帯(モニター消灯のみ維持)... | 通信: {speed:.1f} KB/s  ", end="", flush=True)
+                        elif is_audio_active:
+                            print(f"\r{get_timestamp()} [モニターOFF] 🎙️ 通話/音声ストリーム検知中 (スリープ保護) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif is_gpu_busy_with_python:
                             print(f"\r{get_timestamp()} [モニターOFF] 🤖 AI利用中 (Python GPU: {gpu_util}%) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif is_downloading:
