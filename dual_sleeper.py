@@ -925,6 +925,7 @@ def main():
     # 1: 通信監視状態（無操作状態になり、ネットワークの低通信が継続するのを待つ）
     # 2: 消灯状態（モニターがオフ。操作があるのを待つ）
     state = 0 
+    last_state = -1 # 状態遷移検知用
     
     low_net_start_time = None
     low_net_standby_start_time = None
@@ -932,7 +933,7 @@ def main():
     last_wakeup_time = time.time()
     last_controller_input_time = 0.0
     
-    # 低通信継続区間内の速度統計（平均・最高計算用）
+    # 通信監視区間・消灯区間の速度統計（平均・最高計算用）
     interval_speeds = []
     
     # リトライ制御用変数
@@ -1051,6 +1052,11 @@ def main():
                 
                 time.sleep(0.1)
 
+            # 状態遷移 (State 変更) が発生した時だけ、通信統計データを初期化する
+            if state != last_state:
+                interval_speeds.clear()
+                last_state = state
+
             # 常にネットワーク速度を更新しておく（正確な差分計測のため）
             speed = net_monitor.get_speed()
             
@@ -1122,7 +1128,6 @@ def main():
             if state == 0 and mode_val == "desktop" and is_desktop_active():
                 state = 1
                 low_net_start_time = time.time()
-                interval_speeds.clear()
                 print(f"\n{get_timestamp()} [状態遷移] デスクトップ表示（サーバモード）を検知したため、直接「通信監視状態（State 1）」から開始します。")
 
             # ===== 各状態における動的しきい値の設定 =====
@@ -1153,7 +1158,6 @@ def main():
                     state = 0
                     last_wakeup_time = time.time()
                     net_monitor.get_speed()
-                    interval_speeds.clear()
                     continue
 
                 # 10分間はすべての操作チェックや省エネ状態への遷移を完全に無視する
@@ -1183,7 +1187,6 @@ def main():
                 last_detected_media_title = ""
                 state = 1 # 直接「通信監視状態 (State 1)」へ遷移！
                 low_net_start_time = time.time() # 通信量の監視を開始
-                interval_speeds.clear()
                 # 無操作時間はすでに満了しているものとして偽装（ダミー時刻セット）
                 last_wakeup_time = time.time() - config['idle_limit_seconds']
                 print(f"\n{get_timestamp()} [状態遷移] メディア強制点灯時間が終了しました。放置の可能性があるため、通信監視状態（State 1）へダイレクト移行します。")
@@ -1195,7 +1198,7 @@ def main():
             effective_active_time = max(physical_active_time, last_wakeup_time, last_controller_input_time)
             idle_sec = current_time - effective_active_time
             
-            # 現在の低通信継続時間の計算および通信速度統計（平均・最高）の動的集計
+            # 現在の低通信継続時間の計算および State 内での継続的な通信速度統計（平均・最高）の集計
             if state in (1, 2) and ((state == 1 and low_net_start_time is not None) or (state == 2 and low_net_standby_start_time is not None)):
                 interval_speeds.append(speed)
                 avg_sp = sum(interval_speeds) / len(interval_speeds) if interval_speeds else speed
@@ -1206,7 +1209,6 @@ def main():
                 else:
                     current_low_net_sec = time.time() - low_net_standby_start_time
             else:
-                interval_speeds.clear()
                 avg_sp = speed
                 max_sp = speed
                 current_low_net_sec = 0.0
@@ -1259,7 +1261,6 @@ def main():
                 monitor_off_input_time = get_last_input_time_raw()
                 last_mouse_x, last_mouse_y = get_mouse_position()
                 low_net_standby_start_time = None
-                interval_speeds.clear()
                 continue
             
             if state == 0:
@@ -1272,7 +1273,6 @@ def main():
                 if idle_sec >= limit_sec:
                     state = 1
                     low_net_start_time = None
-                    interval_speeds.clear()
                     print(f"\n{get_timestamp()} [状態遷移] 無操作時間（{limit_sec}秒）を超えました。ネットワーク通信量の監視を開始します。")
 
             elif state == 1:
@@ -1308,7 +1308,6 @@ def main():
                             state = 0
                             last_wakeup_time = time.time()
                             net_monitor.get_speed()
-                            interval_speeds.clear()
                             # ユーザーが明示的に操作したため、一時予約は解除する
                             force_power_mode = None
                             extended_standby_limit = 0 # 復帰時は一時延長を解除
@@ -1321,14 +1320,12 @@ def main():
                             monitor_off_input_time = get_last_input_time_raw()
                             last_mouse_x, last_mouse_y = get_mouse_position()
                             low_net_standby_start_time = None
-                            interval_speeds.clear()
                             continue
 
                     # 通常のState 1：監視中にユーザーが操作を再開したら通常状態に戻る
                     if idle_sec < limit_sec:
                         state = 0
                         low_net_start_time = None
-                        interval_speeds.clear()
                         print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
                         extended_standby_limit = 0 # 復帰時は一時延長を解除
                         continue
@@ -1340,7 +1337,6 @@ def main():
                 if speed <= config['network_limit_kbs'] or is_downloading:
                     if low_net_start_time is None:
                         low_net_start_time = time.time()
-                        interval_speeds.clear()
                     
                     elapsed_low_net = time.time() - low_net_start_time
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
@@ -1355,13 +1351,11 @@ def main():
                         monitor_off_input_time = get_last_input_time_raw()
                         last_mouse_x, last_mouse_y = get_mouse_position()
                         low_net_standby_start_time = None # スタンバイ監視用タイマーを初期化
-                        interval_speeds.clear()
                 else:
                     # 通信量がしきい値を超えたら計測タイマーをリセット
                     if low_net_start_time is not None:
                         print(f"\n{get_timestamp()} [情報] 通信量上昇を検知したためタイマーをリセットします。速度: {speed:.1f} KB/s")
                     low_net_start_time = None
-                    interval_speeds.clear()
                     print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
 
             elif state == 2:
@@ -1377,7 +1371,6 @@ def main():
                     state = 0
                     last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
                     net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
-                    interval_speeds.clear()
                     is_retrying = False # 操作復帰時にリトライフラグをクリア
                     retry_start_time = None
                     has_sent_10min_warning = False
@@ -1393,7 +1386,6 @@ def main():
                         if low_net_standby_start_time is not None:
                             print(f"\n{get_timestamp()} [タイマーリセット] 🔄 パルス通信 ({speed:.1f} KB/s) を検知したためスリープタイマーをリセットしました。")
                         low_net_standby_start_time = time.time()
-                        interval_speeds.clear()
 
                     # ファイルダウンロード中であるかチェック
                     is_downloading = is_downloading_active(downloads_dir)
@@ -1419,7 +1411,6 @@ def main():
                     if allow_sleep:
                         if low_net_standby_start_time is None:
                             low_net_standby_start_time = time.time()
-                            interval_speeds.clear()
                         
                         elapsed_low_net_standby = time.time() - low_net_standby_start_time
                         state_label = "🎮 ゲーム放置中" if gpu_util >= game_gpu_threshold else "💤 放置中"
@@ -1499,7 +1490,6 @@ def main():
                                         print(f"\n{get_timestamp()} [延長] Telegramからの割り込みを受信したため、スリープを10分間延長します。モニター消灯状態は維持されます。")
                                         state = 2 # 消灯を維持
                                         low_net_standby_start_time = time.time() # タイマーのリセット
-                                        interval_speeds.clear()
                                         extended_standby_limit = 600 # 延長時間（10分）を次のスリープ判定に強制適用
                                         is_retrying = False
                                         retry_start_time = None
@@ -1514,7 +1504,6 @@ def main():
                                         state = 0
                                         last_wakeup_time = time.time()
                                         net_monitor.get_speed()
-                                        interval_speeds.clear()
                                         send_notifications(
                                             config,
                                             f"🟢 **[{pc_name}]** 操作を検知したため、スリープ移行をキャンセルしました。通常稼働に戻ります。"
@@ -1531,7 +1520,6 @@ def main():
                             # 復帰直後は「消灯状態（State 2）」から開始するように設定
                             state = 2 
                             low_net_standby_start_time = None
-                            interval_speeds.clear()
                             extended_standby_limit = 0
                             
                             # スリープに入る直前の物理時刻と現在時刻を記録
@@ -1544,7 +1532,6 @@ def main():
                             # 復帰した直後, ネットワークモニターをリセット
                             time.sleep(2)
                             net_monitor.get_speed()
-                            interval_speeds.clear()
                              
                             # 復帰時の入力状態とマウス位置を上書き記録
                             monitor_off_input_time = get_last_input_time_raw()
@@ -1610,7 +1597,6 @@ def main():
                                 has_sent_10min_warning = False
                                 # 通常通りタイマーをリセット
                                 low_net_standby_start_time = None
-                                interval_speeds.clear()
                                 
                                 # 復帰成功時に手動予約を自動クリア
                                 force_power_mode = None
@@ -1626,7 +1612,6 @@ def main():
                             elif speed >= high_net_limit:
                                 print(f"\n{get_timestamp()} [情報] 📡 ゲーム配信中 (高トラフィック: {speed:.1f} KB/s) を検知したためスリープタイマーをリセットします。")
                         low_net_standby_start_time = None
-                        interval_speeds.clear()
                         
                         if is_no_sleep:
                             print(f"\r{get_timestamp()} [モニターOFF] スリープ禁止時間帯(モニター消灯のみ維持)... | 通信: {speed:.1f} KB/s  ", end="", flush=True)
