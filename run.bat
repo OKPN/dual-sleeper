@@ -1,39 +1,29 @@
 @echo off
-title Dual Sleeper Launcher
+cd /d "%~dp0"
+title Dual Sleeper (Portable)
 
-echo [DEBUG] Launcher started.
-echo [DEBUG] Current directory: %CD%
+echo ==================================================
+echo  Dual Sleeper - Standalone Portable Launcher
+echo ==================================================
+echo.
 
-REM Check Python
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo.
-    echo [ERROR] Python is not installed or not in PATH!
-    echo Please install Python 3.8 or higher.
-    echo.
-    pause
-    exit /b 1
-)
-
-REM Setup config.json
 if not exist "config.json" (
     if exist "config.json.example" (
-        echo [INFO] Creating config.json from example...
+        echo Creating config.json from example...
         copy config.json.example config.json >nul
     )
 )
 
-REM Try installing psutil
-echo [INFO] Checking dependencies (psutil)...
-python -m pip install psutil >nul 2>&1
-
-echo.
-echo [INFO] Starting Dual Sleeper script...
+echo Starting Dual Sleeper with embedded Python...
 echo ==================================================
 echo.
 
-python dual_sleeper.py
+.\python_embed\python.exe dual_sleeper.py
+
+if %errorlevel% neq 0 (
+    echo.
+    echo [ERROR] Application exited with code %errorlevel%.
+)
 
 echo.
-echo [INFO] Program finished.
 pause
