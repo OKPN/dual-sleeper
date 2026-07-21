@@ -74,6 +74,7 @@ current_idle_sec = 0.0
 current_net_speed = 0.0
 current_low_net_sec = 0.0
 current_gpu_util = 0
+current_media_force_until = 0.0
 telegram_offset = 0
 
 # Telegram割り込みスリープ延長用グローバル変数
@@ -535,7 +536,7 @@ def hotkey_worker():
 def telegram_worker(bot_token, chat_id, pc_name):
     """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
     global force_power_mode, telegram_offset
-    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util
+    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util, current_media_force_until
     global is_sleep_pending, telegram_extend_request
     
     if not bot_token or not chat_id:
@@ -652,7 +653,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             )
                             print(f"\n{get_timestamp()} [リモート予約] Telegramから電源予約変更を受信: {str(force_power_mode).upper()}")
                     
-                    # 2. status コマンドのハンドリング（低通信継続時間の表示拡張）
+                    # 2. status コマンドのハンドリング（メディア強制点灯の表示拡張）
                     elif cmd in ("/status", "status"):
                         state_names = {0: "通常状態 (State 0)", 1: "通信監視中 (State 1)", 2: "消灯中 (State 2)"}
                         state_str = state_names.get(current_state_num, "不明")
@@ -673,6 +674,14 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         }
                         server_str = server_labels.get(server_mode_val, "オフ")
                         
+                        # 強制点灯状態の文字列生成
+                        now_t = time.time()
+                        if now_t < current_media_force_until and current_media_force_until > 0:
+                            rem_sec = int(current_media_force_until - now_t)
+                            media_str = f"有効 (残り {rem_sec} 秒)"
+                        else:
+                            media_str = "なし"
+                        
                         reply_text = (
                             f"📊 **[{pc_name}] 現在のステータス**\n"
                             f"·状態: {state_str}\n"
@@ -680,6 +689,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             f"·通信速度: {current_net_speed:.1f} KB/s\n"
                             f"·低通信継続: {current_low_net_sec:.1f} 秒\n"
                             f"·GPU使用率: {current_gpu_util} %\n"
+                            f"·強制点灯: `{media_str}`\n"
                             f"·電源予約: `{mode_str}`\n"
                             f"·サーバモード: `{server_str}`"
                         )
@@ -747,7 +757,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 
 def main():
     global force_power_mode
-    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util
+    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util, current_media_force_until
     global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered, last_hotkey_time
 
     # 簡易編集モードを無効化
@@ -953,6 +963,7 @@ def main():
                         last_hotkey_time = now_t
                         # 手動消灯の時はメディア強制点灯モードも完全に打ち切る
                         media_force_on_until = 0
+                        current_media_force_until = 0.0
                         last_detected_media_title = ""
                         
                         if state == 2:
@@ -1073,12 +1084,14 @@ def main():
                     # 指定された延長時間（秒）をセット（デフォルトは10分）
                     target_duration = 600.0 if has_media else custom_duration
                     media_force_on_until = time.time() + target_duration
+                    current_media_force_until = media_force_on_until
                     print(f"\n{get_timestamp()} [メディア/登録タイトル検知] 点灯延長対象（...{current_title[-40:]}）のオープンを検知しました。{int(target_duration // 60)}分間 ({int(target_duration)}秒) の強制点灯モードに入ります。")
             else:
                 # 対象ウィンドウが非アクティブ（閉じられた・別のウィンドウへ移動）の時はクリア
                 if media_force_on_until > 0 and (last_detected_media_title and last_detected_media_title not in current_title):
                     print(f"\n{get_timestamp()} [状態遷移] 対象ウィンドウが閉じられたか非アクティブになったため、強制点灯モードを終了します。")
                     media_force_on_until = 0
+                    current_media_force_until = 0.0
                 last_detected_media_title = ""
 
             # ===== 高速消灯・サーバモードにおける直接遷移判定 =====
@@ -1119,6 +1132,7 @@ def main():
                 if not (has_media or has_custom_kw) or (last_detected_media_title and last_detected_media_title not in current_title):
                     print(f"\n{get_timestamp()} [状態遷移] メディアウィンドウのクローズまたは非アクティブ化を検知したため、強制点灯を解除して通常監視（State 0）へ移行します。")
                     media_force_on_until = 0
+                    current_media_force_until = 0.0
                     last_detected_media_title = ""
                     state = 0
                     last_wakeup_time = time.time()
@@ -1131,6 +1145,7 @@ def main():
                 current_idle_sec = 0.0
                 current_net_speed = speed
                 current_low_net_sec = 0.0
+                current_media_force_until = media_force_on_until
                 
                 # GPUステータスの更新
                 gpu_limit = config.get("gpu_limit_percent", 0)
@@ -1144,6 +1159,7 @@ def main():
             elif media_force_on_until > 0:
                 # ちょうど指定時間が満了した瞬間
                 media_force_on_until = 0 # タイマーをクリア
+                current_media_force_until = 0.0
                 last_detected_media_title = ""
                 state = 1 # 直接「通信監視状態 (State 1)」へ遷移！
                 low_net_start_time = time.time() # 通信量の監視を開始
@@ -1151,6 +1167,8 @@ def main():
                 last_wakeup_time = time.time() - config['idle_limit_seconds']
                 print(f"\n{get_timestamp()} [状態遷移] メディア強制点灯時間が終了しました。放置の可能性があるため、通信監視状態（State 1）へダイレクト移行します。")
                 continue
+            else:
+                current_media_force_until = 0.0
 
             # 物理入力(KB/マウス/コントローラー)の時刻と、モニター復帰時刻の最も新しいものを最終アクティブ時間とする
             effective_active_time = max(physical_active_time, last_wakeup_time, last_controller_input_time)
