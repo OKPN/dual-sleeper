@@ -447,6 +447,7 @@ def load_config():
         "wakeup_active_threshold_seconds": 5,
         "gpu_protect_processes": ["python.exe", "python", "llama-server.exe", "llama-server"],
         "gpu_limit_percent": 10,
+        "game_gpu_threshold_percent": 30,
         "high_network_limit_kbs": 625.0,
         "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60", "obs:360"],
         "server_mode": "off",
@@ -1196,8 +1197,8 @@ def main():
             high_net_limit = config.get("high_network_limit_kbs", 625.0)
             normal_net_limit = config.get("network_limit_kbs", 20.0)
 
-            # ゲームGPU判定の閾値（GPU使用率15%以上を「ゲーム等のGPU使用放置」とみなす）
-            game_gpu_threshold = 15
+            # ゲームGPU判定の閾値（GPU使用率30%以上を「ゲーム等のGPU使用放置」とみなす）
+            game_gpu_threshold = config.get("game_gpu_threshold_percent", 30)
 
             if is_gpu_busy_with_python:
                 current_status_reason = f"🤖 AI利用中 (Python GPU: {gpu_util}%)"

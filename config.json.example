@@ -43,6 +43,7 @@
     "llama-server"
   ],
   "gpu_limit_percent": 10,
+  "game_gpu_threshold_percent": 30,
 
   // 【配信・大容量通信保護設定】通信速度がこの閾値 (KB/s) 以上の場合はスリープを阻止します。
   // 625.0 KB/s = 5.0 Mbps (Discord配信、YouTube/Twitch配信、高速ダウンロードの保護用)
