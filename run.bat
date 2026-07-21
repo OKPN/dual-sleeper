@@ -1,57 +1,70 @@
 @echo off
+cd /d "%~dp0"
 title Dual Sleeper
 
 echo ==================================================
-echo  Dual Sleeper - Auto Launcher
+echo  Dual Sleeper Launcher
 echo ==================================================
+echo.
 
-REM 1. Check Python installation
+REM 1. Check Python
 where python >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [ERROR] Python is not installed or not added to PATH.
-    echo Please install Python 3.8+ and try again.
+    echo [ERROR] Python was not found on your system!
+    echo Please install Python 3.8+ and make sure to check "Add Python to PATH".
+    echo.
     pause
-    exit /b 1
+    goto :eof
 )
 
-REM 2. Create virtual environment (.venv) if not exists
+REM 2. Clean broken .venv if any
+if exist ".venv" (
+    if not exist ".venv\Scripts\activate.bat" (
+        echo [INFO] Repairing virtual environment...
+        rmdir /s /q .venv >nul 2>&1
+    )
+)
+
+REM 3. Create .venv if not exists
 if not exist ".venv" (
-    echo [1/3] Creating Python virtual environment (.venv)...
+    echo Creating virtual environment (.venv)...
     python -m venv .venv
     if %errorlevel% neq 0 (
         echo [ERROR] Failed to create virtual environment.
-        pause
-        exit /b 1
+        echo Running directly with system Python...
+        goto :RUN_DIRECT
     )
-    echo [1/3] Virtual environment created successfully.
-) else (
-    echo [1/3] Virtual environment (.venv) found.
 )
 
-REM 3. Activate virtual environment
-call .venv\Scripts\activate.bat
-
-REM 4. Install requirements in virtual environment
-echo [2/3] Checking and installing dependencies (psutil)...
-python -m pip install -r requirements.txt
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to install dependencies. Please check internet connection.
-    pause
-    exit /b 1
+REM 4. Activate .venv
+if exist ".venv\Scripts\activate.bat" (
+    echo Activating virtual environment...
+    call .venv\Scripts\activate.bat
 )
 
-REM 5. Auto copy config.json from config.json.example if missing
+:RUN_DIRECT
+echo Installing required packages (psutil)...
+python -m pip install psutil
+
 if not exist "config.json" (
     if exist "config.json.example" (
-        echo [3/3] Creating config.json from config.json.example...
+        echo Creating config.json from example...
         copy config.json.example config.json >nul
     )
 )
 
-echo [3/3] Launching Dual Sleeper...
+echo.
+echo Starting Dual Sleeper...
 echo ==================================================
 echo.
 
-.venv\Scripts\python.exe dual_sleeper.py
+python dual_sleeper.py
 
+if %errorlevel% neq 0 (
+    echo.
+    echo [ERROR] Application stopped unexpectedly with code %errorlevel%.
+)
+
+echo.
+echo Press any key to exit.
 pause
