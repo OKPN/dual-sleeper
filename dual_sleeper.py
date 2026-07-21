@@ -72,6 +72,7 @@ force_power_mode = None
 current_state_num = 0
 current_idle_sec = 0.0
 current_net_speed = 0.0
+current_low_net_sec = 0.0
 current_gpu_util = 0
 telegram_offset = 0
 
@@ -534,7 +535,7 @@ def hotkey_worker():
 def telegram_worker(bot_token, chat_id, pc_name):
     """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
     global force_power_mode, telegram_offset
-    global current_state_num, current_idle_sec, current_net_speed, current_gpu_util
+    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util
     global is_sleep_pending, telegram_extend_request
     
     if not bot_token or not chat_id:
@@ -651,7 +652,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             )
                             print(f"\n{get_timestamp()} [リモート予約] Telegramから電源予約変更を受信: {str(force_power_mode).upper()}")
                     
-                    # 2. status コマンドのハンドリング（サーバモードと手動予約の表示拡張）
+                    # 2. status コマンドのハンドリング（低通信継続時間の表示拡張）
                     elif cmd in ("/status", "status"):
                         state_names = {0: "通常状態 (State 0)", 1: "通信監視中 (State 1)", 2: "消灯中 (State 2)"}
                         state_str = state_names.get(current_state_num, "不明")
@@ -677,6 +678,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             f"·状態: {state_str}\n"
                             f"·無操作時間: {current_idle_sec:.1f} 秒\n"
                             f"·通信速度: {current_net_speed:.1f} KB/s\n"
+                            f"·低通信継続: {current_low_net_sec:.1f} 秒\n"
                             f"·GPU使用率: {current_gpu_util} %\n"
                             f"·電源予約: `{mode_str}`\n"
                             f"·サーバモード: `{server_str}`"
@@ -745,7 +747,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 
 def main():
     global force_power_mode
-    global current_state_num, current_idle_sec, current_net_speed, current_gpu_util
+    global current_state_num, current_idle_sec, current_net_speed, current_low_net_sec, current_gpu_util
     global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered, last_hotkey_time
 
     # 簡易編集モードを無効化
@@ -770,7 +772,7 @@ def main():
             send_discord_notification(discord_url, test_message)
         if telegram_token and telegram_chat:
             print(f"Telegramのテスト送信を行っています... (Chat ID: {telegram_chat})")
-            send_telegram_notification(telegram_token, telegram_chat, test_message)
+            send_telegram_notification(telegram_token, test_message)
             
         print("テストメッセージの送信を試みました。スマホや各アプリを確認してください。")
         sys.exit(0)
@@ -1121,6 +1123,7 @@ def main():
                 current_state_num = 0
                 current_idle_sec = 0.0
                 current_net_speed = speed
+                current_low_net_sec = 0.0
                 
                 # GPUステータスの更新
                 gpu_limit = config.get("gpu_limit_percent", 0)
@@ -1145,6 +1148,14 @@ def main():
             effective_active_time = max(physical_active_time, last_wakeup_time, last_controller_input_time)
             idle_sec = current_time - effective_active_time
             
+            # 現在の低通信継続時間の計算 (State 1 または State 2)
+            if state == 1 and low_net_start_time is not None:
+                current_low_net_sec = time.time() - low_net_start_time
+            elif state == 2 and low_net_standby_start_time is not None:
+                current_low_net_sec = time.time() - low_net_standby_start_time
+            else:
+                current_low_net_sec = 0.0
+
             # グローバルステータスの更新（Telegramスレッドへのリアルタイム情報共有用）
             current_state_num = state
             current_idle_sec = idle_sec
