@@ -1196,6 +1196,9 @@ def main():
             high_net_limit = config.get("high_network_limit_kbs", 625.0)
             normal_net_limit = config.get("network_limit_kbs", 20.0)
 
+            # ゲームGPU判定の閾値（GPU使用率15%以上を「ゲーム等のGPU使用放置」とみなす）
+            game_gpu_threshold = 15
+
             if is_gpu_busy_with_python:
                 current_status_reason = f"🤖 AI利用中 (Python GPU: {gpu_util}%)"
             elif speed >= high_net_limit:
@@ -1203,7 +1206,10 @@ def main():
             elif state == 2 and speed > normal_net_limit:
                 current_status_reason = f"🔄 パルス通信検知 ({speed:.1f} KB/s)"
             elif state == 2:
-                current_status_reason = f"🎮 ゲーム放置中 (スリープ待機)"
+                if gpu_util >= game_gpu_threshold:
+                    current_status_reason = f"🎮 ゲーム放置中 (スリープ待機)"
+                else:
+                    current_status_reason = f"💤 放置中 (スリープ待機)"
             elif state == 1:
                 current_status_reason = f"🔍 通信監視中 (低通信待機)"
             else:
@@ -1376,7 +1382,8 @@ def main():
                             low_net_standby_start_time = time.time()
                         
                         elapsed_low_net_standby = time.time() - low_net_standby_start_time
-                        print(f"\r{get_timestamp()} [モニターOFF] 🎮 ゲーム放置中(スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
+                        state_label = "🎮 ゲーム放置中" if gpu_util >= game_gpu_threshold else "💤 放置中"
+                        print(f"\r{get_timestamp()} [モニターOFF] {state_label}(スリープ待機: {elapsed_low_net_standby:.1f}/{standby_limit}秒) | 通信: {speed:.1f} KB/s | GPU: {gpu_util}%  ", end="", flush=True)
                         
                         # スリープ状態での終了時、予約ログを出力
                         if force_power_mode:
