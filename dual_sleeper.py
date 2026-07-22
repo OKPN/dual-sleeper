@@ -1141,8 +1141,10 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
         }
         hib_label = mode_labels.get(hib_mode, "スマホ通知＆選択")
         print(f"  ・落雷保護アラート    : 有効 (位置: {lat}, {lon} | 周期: {interval}秒 | モード: {hib_mode} -> {hib_label})")
+        print("    💡 [ワンポイント] 関東等の落雷ピークは「7月〜8月の14:00〜18:00」です。この時期の常用を強く推奨します。")
     else:
         print("  ・落雷保護アラート    : 無効 (初期無効)")
+        print("    💡 [ワンポイント] 関東等の落雷ピークは「7月〜8月の14:00〜18:00」です。夏季は config.json で有効化を推奨します。")
     
     # 復帰後の設定出力
     print(f"  ・復帰後判定猶予時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (OSノイズ回避用)")
