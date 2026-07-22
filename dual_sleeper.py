@@ -461,6 +461,26 @@ def parse_location(lightning_cfg):
             
     return None, None
 
+def get_auto_hibernate_mode(lightning_cfg):
+    """
+    lightning_protection 設定辞書から auto_hibernate モードを取得します。
+    戻り値: "off", "state2_only", "always"
+    """
+    if not isinstance(lightning_cfg, dict):
+        return "off"
+        
+    val = lightning_cfg.get("auto_hibernate", "off")
+    if isinstance(val, bool):
+        return "always" if val else "off"
+        
+    val_str = str(val).strip().lower()
+    if val_str in ("always", "true", "all"):
+        return "always"
+    elif val_str in ("state2_only", "state2", "standby"):
+        return "state2_only"
+    else:
+        return "off"
+
 def check_lightning_alert(lat, lon):
     """
     Open-Meteo API を叩いて指定された緯度・経度の現在の天気をチェックします。
@@ -1060,9 +1080,14 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     if isinstance(lightning_cfg, dict) and lightning_cfg.get("enabled", False):
         lat, lon = parse_location(lightning_cfg)
         interval = lightning_cfg.get("check_interval_seconds", 300)
-        auto_hib = lightning_cfg.get("auto_hibernate", False)
-        hib_label = "【問答無用で自動休止】" if auto_hib else "スマホ通知＆選択"
-        print(f"  ・落雷保護アラート    : 有効 (位置: {lat}, {lon} | 周期: {interval}秒 | 動作: {hib_label})")
+        hib_mode = get_auto_hibernate_mode(lightning_cfg)
+        mode_labels = {
+            "off": "スマホ通知＆選択",
+            "state2_only": "消灯/放置中(State 2)のみ問答無用自動休止",
+            "always": "常時問答無用自動休止"
+        }
+        hib_label = mode_labels.get(hib_mode, "スマホ通知＆選択")
+        print(f"  ・落雷保護アラート    : 有効 (位置: {lat}, {lon} | 周期: {interval}秒 | モード: {hib_mode} -> {hib_label})")
     else:
         print("  ・落雷保護アラート    : 無効 (初期無効)")
     
@@ -1262,15 +1287,20 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     if is_thunder:
                         if not lightning_alert_active:
                             lightning_alert_active = True
-                            auto_hib = lightning_cfg.get("auto_hibernate", False)
+                            hib_mode = get_auto_hibernate_mode(lightning_cfg)
+                            should_auto_hibernate = (
+                                hib_mode == "always" or 
+                                (hib_mode == "state2_only" and state == 2)
+                            )
                             
-                            if auto_hib:
-                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ 自宅周辺で雷雨/落雷が検知されたため、auto_hibernate設定に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg})")
+                            if should_auto_hibernate:
+                                mode_reason = "always (常時自動)" if hib_mode == "always" else "state2_only (消灯/放置中自動)"
+                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ 自宅周辺で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷自動退避通知】**\n"
                                     f"登録地点（位置: {lat}, {lon}）周辺で雷雨・落雷が検知されました！\n\n"
-                                    f"⚡ `auto_hibernate: true` 設定に従い、PCおよびデータを雷サージから保護するため直ちに「休止状態（ハイバネート）」へ自動移行します。"
+                                    f"⚡ `auto_hibernate: \"{hib_mode}\"` 設定に従い、PCおよびデータを雷サージから保護するため直ちに「休止状態（ハイバネート）」へ自動移行します。"
                                 )
                                 time.sleep(3.0) # 通知送信完了待ち
                                 execute_power_command(use_hibernate=True)
