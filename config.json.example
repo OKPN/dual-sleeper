@@ -85,5 +85,14 @@
 
   // 【復帰直後ガード設定】スリープ復帰後、OSの内部ノイズを誤検知しないための猶予時間 (秒) と判定閾値 (秒)
   "wakeup_mouse_grace_seconds": 20,
-  "wakeup_active_threshold_seconds": 5
+  "wakeup_active_threshold_seconds": 5,
+
+  // 【落雷防災アラート設定】Open-Meteo API を使って自宅周辺の雷雨・落雷を5分ごとに監視します。
+  // Googleマップ等で自宅を右クリックしてコピーした文字列 (例: "35.6812..., 139.7671...") を location にそのまま貼り付け、
+  // enabled を true にすると有効化されます。
+  "lightning_protection": {
+    "enabled": false,
+    "location": "35.6812, 139.7671",
+    "check_interval_seconds": 300
+  }
 }

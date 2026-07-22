@@ -434,6 +434,67 @@ def send_notifications(config, message):
     if bot_token and chat_id:
         send_telegram_notification(bot_token, chat_id, message)
 
+def parse_location(lightning_cfg):
+    """
+    lightning_protection 設定辞書から (latitude, longitude) を解析して返します。
+    "location": "35.6812, 139.7671" のような Google マップからの全コピー文字列をパースします。
+    """
+    if not isinstance(lightning_cfg, dict):
+        return None, None
+        
+    loc = lightning_cfg.get("location", "")
+    if loc and isinstance(loc, str):
+        parts = [p.strip() for p in loc.replace(",", " ").split() if p.strip()]
+        if len(parts) >= 2:
+            try:
+                return float(parts[0]), float(parts[1])
+            except ValueError:
+                pass
+                
+    lat = lightning_cfg.get("latitude")
+    lon = lightning_cfg.get("longitude")
+    if lat is not None and lon is not None:
+        try:
+            return float(lat), float(lon)
+        except (ValueError, TypeError):
+            pass
+            
+    return None, None
+
+def check_lightning_alert(lat, lon):
+    """
+    Open-Meteo API を叩いて指定された緯度・経度の現在の天気をチェックします。
+    雷雨・落雷コード (95, 96, 99) が検知された場合に True を返します。
+    戻り値: (is_thunder, weather_code_desc)
+    """
+    if lat is None or lon is None:
+        return False, "位置情報未設定"
+        
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "DualSleeper/1.0"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode("utf-8"))
+                current = data.get("current", {})
+                code = current.get("weather_code", -1)
+                
+                # 天気コード解釈
+                # 95: 雷雨 (Thunderstorm: Slight or moderate)
+                # 96: 雹を伴う雷雨 (Thunderstorm with slight hail)
+                # 99: 激しい雷雨 (Thunderstorm with heavy hail)
+                if code in (95, 96, 99):
+                    return True, f"⚡ 雷雨/落雷検知 (コード {code})"
+                else:
+                    return False, f"正常 (コード {code})"
+    except Exception as e:
+        return False, f"取得エラー: {e}"
+        
+    return False, "データなし"
+
 def get_gpu_status(protect_processes):
     """
     NVIDIA GPUの使用率(%) と、現在GPUを使用している保護対象プロセスの有無を判定します。
@@ -560,7 +621,14 @@ def load_config():
         "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60", "obs:360"],
         "server_mode": "off",
         "server_mode_standby_delay_seconds": 600,
-        "wol_url": ""
+        "wol_url": "",
+        "lightning_protection": {
+            "enabled": False,
+            "location": "35.6812, 139.7671",
+            "latitude": 35.6812,
+            "longitude": 139.7671,
+            "check_interval_seconds": 300
+        }
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     if os.path.exists(config_path):
@@ -985,6 +1053,15 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
         print(f"  ・WoL遠隔起動リンク   : 設定済み ({wol_link_url[:40]}...)")
     else:
         print("  ・WoL遠隔起動リンク   : 未設定")
+        
+    # 落雷保護アラートの設定出力
+    lightning_cfg = config.get("lightning_protection", {})
+    if isinstance(lightning_cfg, dict) and lightning_cfg.get("enabled", False):
+        lat, lon = parse_location(lightning_cfg)
+        interval = lightning_cfg.get("check_interval_seconds", 300)
+        print(f"  ・落雷保護アラート    : 有効 (位置: {lat}, {lon} | 周期: {interval}秒)")
+    else:
+        print("  ・落雷保護アラート    : 無効 (初期無効)")
     
     # 復帰後の設定出力
     print(f"  ・復帰後判定猶予時間  : {config.get('wakeup_mouse_grace_seconds', 20)} 秒 (OSノイズ回避用)")
@@ -1069,6 +1146,10 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
 
     # 一時的な延長時間記憶用
     extended_standby_limit = 0
+
+    # 落雷保護監視用変数
+    last_lightning_check_time = 0
+    lightning_alert_active = False
 
     try:
         while True:
@@ -1164,6 +1245,32 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         pass
                 
                 time.sleep(0.1)
+
+            # ===== 【落雷保護アラートチェック】 =====
+            lightning_cfg = config.get("lightning_protection", {})
+            if isinstance(lightning_cfg, dict) and lightning_cfg.get("enabled", False):
+                lat, lon = parse_location(lightning_cfg)
+                interval = lightning_cfg.get("check_interval_seconds", 300)
+                
+                if time.time() - last_lightning_check_time >= interval:
+                    last_lightning_check_time = time.time()
+                    is_thunder, thunder_msg = check_lightning_alert(lat, lon)
+                    
+                    if is_thunder:
+                        if not lightning_alert_active:
+                            lightning_alert_active = True
+                            print(f"\n{get_timestamp()} [落雷警報] ⚡ 自宅周辺で雷雨/落雷が検知されました！({thunder_msg})")
+                            send_notifications(
+                                config,
+                                f"⚡ **[{pc_name}] 【落雷警報アラート】**\n"
+                                f"登録地点（緯度: {lat}, 経度: {lon}）周辺で雷雨・落雷が検知されました！\n\n"
+                                f"雷サージからPCおよびデータを保護するため、休止状態（ハイバネート）に移行しますか？\n"
+                                f"スマホから「1」または「h」と返信すると、直ちに休止状態（ハイバネート）を予約・実行します。（または /sleep hibernate）"
+                            )
+                    else:
+                        if lightning_alert_active:
+                            lightning_alert_active = False
+                            print(f"\n{get_timestamp()} [落雷警報解除] 自宅周辺の雷雨/落雷警報が解除されました。")
 
             # 状態遷移 (State 変更) が発生した時だけ、通信統計データを初期化する
             if state != last_state:
