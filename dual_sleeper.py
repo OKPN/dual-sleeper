@@ -905,7 +905,11 @@ def main():
         sys.exit(0)
 
     print("=" * 60)
-    print(" Dual Sleeper - 段階的電源管理システム")
+    print("""
+Dual Sleeper v1.0.0
+====================
+AI学習サーバー・リモートPC向け インテリジェント電源＆モニター管理システム
+""")
     print("=" * 60)
     
     config = load_config()
