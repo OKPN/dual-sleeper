@@ -13,6 +13,7 @@ import psutil
 import glob
 import msvcrt
 import threading
+import math
 
 # Windows API 定義
 class LASTINPUTINFO(ctypes.Structure):
@@ -481,14 +482,54 @@ def get_auto_hibernate_mode(lightning_cfg):
     else:
         return "off"
 
+def calculate_distance_km(lat1, lon1, lat2, lon2):
+    """
+    2点間の緯度・経度から大円距離(km)を算出します (Haversine formula)。
+    """
+    try:
+        R = 6371.0  # 地球の平均半径 (km)
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        d_phi = math.radians(lat2 - lat1)
+        d_lam = math.radians(lon2 - lon1)
+        
+        a = math.sin(d_phi / 2.0)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2.0)**2
+        c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+        return R * c
+    except Exception:
+        return 0.0
+
+def calculate_bearing_16(lat1, lon1, lat2, lon2):
+    """
+    地点1(自宅)から見た地点2(気象観測ポイント)の方角を16方位("北西", "南南西"など)で返します。
+    """
+    try:
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        d_lam = math.radians(lon2 - lon1)
+        
+        y = math.sin(d_lam) * math.cos(phi2)
+        x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(d_lam)
+        
+        bearing = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+        
+        directions = [
+            "北", "北北東", "北東", "東北東",
+            "東", "東南東", "南東", "南南東",
+            "南", "南南西", "南西", "西南西",
+            "西", "西北西", "北西", "北北西"
+        ]
+        index = int((bearing + 11.25) / 22.5) % 16
+        return directions[index]
+    except Exception:
+        return ""
+
 def check_lightning_alert(lat, lon):
     """
     Open-Meteo API を叩いて指定された緯度・経度の現在の天気をチェックします。
     雷雨・落雷コード (95, 96, 99) が検知された場合に True を返します。
-    戻り値: (is_thunder, weather_code_desc)
+    戻り値: (is_thunder, weather_code_desc, location_info_str)
     """
     if lat is None or lon is None:
-        return False, "位置情報未設定"
+        return False, "位置情報未設定", ""
         
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code"
     req = urllib.request.Request(
@@ -502,18 +543,30 @@ def check_lightning_alert(lat, lon):
                 current = data.get("current", {})
                 code = current.get("weather_code", -1)
                 
+                # APIが応答した気象グリッドの緯度経度
+                res_lat = data.get("latitude", lat)
+                res_lon = data.get("longitude", lon)
+                
+                dist_km = calculate_distance_km(lat, lon, res_lat, res_lon)
+                bearing = calculate_bearing_16(lat, lon, res_lat, res_lon)
+                
+                if dist_km < 0.1 or not bearing:
+                    loc_desc = "自宅直近エリア"
+                else:
+                    loc_desc = f"自宅から【{bearing} 約 {dist_km:.1f} km】地点"
+                
                 # 天気コード解釈
                 # 95: 雷雨 (Thunderstorm: Slight or moderate)
                 # 96: 雹を伴う雷雨 (Thunderstorm with slight hail)
                 # 99: 激しい雷雨 (Thunderstorm with heavy hail)
                 if code in (95, 96, 99):
-                    return True, f"⚡ 雷雨/落雷検知 (コード {code})"
+                    return True, f"⚡ 雷雨/落雷検知 (コード {code})", loc_desc
                 else:
-                    return False, f"正常 (コード {code})"
+                    return False, f"正常 (コード {code})", loc_desc
     except Exception as e:
-        return False, f"取得エラー: {e}"
+        return False, f"取得エラー: {e}", ""
         
-    return False, "データなし"
+    return False, "データなし", ""
 
 def get_gpu_status(protect_processes):
     """
@@ -1282,7 +1335,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 
                 if time.time() - last_lightning_check_time >= interval:
                     last_lightning_check_time = time.time()
-                    is_thunder, thunder_msg = check_lightning_alert(lat, lon)
+                    is_thunder, thunder_msg, loc_desc = check_lightning_alert(lat, lon)
                     
                     if is_thunder:
                         if not lightning_alert_active:
@@ -1293,23 +1346,25 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                 (hib_mode == "state2_only" and state == 2)
                             )
                             
+                            loc_info = f"\n📍 検知位置: {loc_desc}" if loc_desc else ""
+                            
                             if should_auto_hibernate:
                                 mode_reason = "always (常時自動)" if hib_mode == "always" else "state2_only (消灯/放置中自動)"
-                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ 自宅周辺で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg})")
+                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ {loc_desc or '自宅周辺'}で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷自動退避通知】**\n"
-                                    f"登録地点（位置: {lat}, {lon}）周辺で雷雨・落雷が検知されました！\n\n"
+                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}\n\n"
                                     f"⚡ `auto_hibernate: \"{hib_mode}\"` 設定に従い、PCおよびデータを雷サージから保護するため直ちに「休止状態（ハイバネート）」へ自動移行します。"
                                 )
                                 time.sleep(3.0) # 通知送信完了待ち
                                 execute_power_command(use_hibernate=True)
                             else:
-                                print(f"\n{get_timestamp()} [落雷警報] ⚡ 自宅周辺で雷雨/落雷が検知されました！({thunder_msg})")
+                                print(f"\n{get_timestamp()} [落雷警報] ⚡ {loc_desc or '自宅周辺'}で雷雨/落雷が検知されました！({thunder_msg})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷警報アラート】**\n"
-                                    f"登録地点（位置: {lat}, {lon}）周辺で雷雨・落雷が検知されました！\n\n"
+                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}\n\n"
                                     f"雷サージからPCおよびデータを保護するため、休止状態（ハイバネート）に移行しますか？\n"
                                     f"スマホから「1」または「h」と返信すると、直ちに休止状態（ハイバネート）を予約・実行します。（または /sleep hibernate）"
                                 )
