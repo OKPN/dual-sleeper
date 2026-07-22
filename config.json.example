@@ -90,9 +90,11 @@
   // 【落雷防災アラート設定】Open-Meteo API を使って自宅周辺の雷雨・落雷を5分ごとに監視します。
   // Googleマップ等で自宅を右クリックしてコピーした文字列 (例: "35.6812..., 139.7671...") を location にそのまま貼り付け、
   // enabled を true にすると有効化されます。
+  // auto_hibernate を true にすると、雷検知時にスマホの操作を待たず【問答無用で即座に休止状態へ自動移行】します。
   "lightning_protection": {
     "enabled": false,
     "location": "35.6812, 139.7671",
-    "check_interval_seconds": 300
+    "check_interval_seconds": 300,
+    "auto_hibernate": false
   }
 }

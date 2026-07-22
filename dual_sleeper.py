@@ -627,7 +627,8 @@ def load_config():
             "location": "35.6812, 139.7671",
             "latitude": 35.6812,
             "longitude": 139.7671,
-            "check_interval_seconds": 300
+            "check_interval_seconds": 300,
+            "auto_hibernate": False
         }
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -1059,7 +1060,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     if isinstance(lightning_cfg, dict) and lightning_cfg.get("enabled", False):
         lat, lon = parse_location(lightning_cfg)
         interval = lightning_cfg.get("check_interval_seconds", 300)
-        print(f"  ・落雷保護アラート    : 有効 (位置: {lat}, {lon} | 周期: {interval}秒)")
+        auto_hib = lightning_cfg.get("auto_hibernate", False)
+        hib_label = "【問答無用で自動休止】" if auto_hib else "スマホ通知＆選択"
+        print(f"  ・落雷保護アラート    : 有効 (位置: {lat}, {lon} | 周期: {interval}秒 | 動作: {hib_label})")
     else:
         print("  ・落雷保護アラート    : 無効 (初期無効)")
     
@@ -1259,14 +1262,27 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     if is_thunder:
                         if not lightning_alert_active:
                             lightning_alert_active = True
-                            print(f"\n{get_timestamp()} [落雷警報] ⚡ 自宅周辺で雷雨/落雷が検知されました！({thunder_msg})")
-                            send_notifications(
-                                config,
-                                f"⚡ **[{pc_name}] 【落雷警報アラート】**\n"
-                                f"登録地点（緯度: {lat}, 経度: {lon}）周辺で雷雨・落雷が検知されました！\n\n"
-                                f"雷サージからPCおよびデータを保護するため、休止状態（ハイバネート）に移行しますか？\n"
-                                f"スマホから「1」または「h」と返信すると、直ちに休止状態（ハイバネート）を予約・実行します。（または /sleep hibernate）"
-                            )
+                            auto_hib = lightning_cfg.get("auto_hibernate", False)
+                            
+                            if auto_hib:
+                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ 自宅周辺で雷雨/落雷が検知されたため、auto_hibernate設定に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg})")
+                                send_notifications(
+                                    config,
+                                    f"⚡ **[{pc_name}] 【落雷自動退避通知】**\n"
+                                    f"登録地点（位置: {lat}, {lon}）周辺で雷雨・落雷が検知されました！\n\n"
+                                    f"⚡ `auto_hibernate: true` 設定に従い、PCおよびデータを雷サージから保護するため直ちに「休止状態（ハイバネート）」へ自動移行します。"
+                                )
+                                time.sleep(3.0) # 通知送信完了待ち
+                                execute_power_command(use_hibernate=True)
+                            else:
+                                print(f"\n{get_timestamp()} [落雷警報] ⚡ 自宅周辺で雷雨/落雷が検知されました！({thunder_msg})")
+                                send_notifications(
+                                    config,
+                                    f"⚡ **[{pc_name}] 【落雷警報アラート】**\n"
+                                    f"登録地点（位置: {lat}, {lon}）周辺で雷雨・落雷が検知されました！\n\n"
+                                    f"雷サージからPCおよびデータを保護するため、休止状態（ハイバネート）に移行しますか？\n"
+                                    f"スマホから「1」または「h」と返信すると、直ちに休止状態（ハイバネート）を予約・実行します。（または /sleep hibernate）"
+                                )
                     else:
                         if lightning_alert_active:
                             lightning_alert_active = False
