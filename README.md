@@ -124,6 +124,7 @@
 | `telegram_chat_id` | `""` | ID | Telegram 宛先チャットID。 |
 | `wol_url` | `""` | URL | スリープ通知内に自動挿入する etherwake 専用の Wake on LAN 遠隔起動リンク（制作者運営の **`https://etherwake.k7m.f5.si`** のURL）。 |
 | `sleep_pending_seconds` | `30` | 秒 | スリープ予告通知後の猶予時間。 |
+| `lightning_protection` | `{}` | オブジェクト | 落雷防災アラート設定。`enabled`（有効化）、`location`（Googleマップ位置コピペ）、`auto_hibernate`（`"off"`, `"state2_only"`, `"always"` モード）。 |
 
 ---
 
