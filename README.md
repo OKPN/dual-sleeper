@@ -145,3 +145,9 @@
 * 🔗 **etherwake 専用 WoL 連携:** 制作者提供の Web WoL サービス（`https://etherwake.k7m.f5.si`）への直通遠隔起動リンク自動挿入。
 * 🎮 **GPU 30% スマート判定:** AI学習/推論（Python等）の完全保護と、ゲーム無駄回しの自動スリープ判別。
 * ⌨️ **入力デバイス＆ホットキー:** XInput ゲームパッド監視 ＆ `Win + Ctrl + Shift + Alt + M` 即時トグル。
+
+---
+
+## 🙏 クレジット ＆ ライセンス (Credits & Licenses)
+
+* **Weather & Forecast API:** Weather data provided by [Open-Meteo.com](https://open-meteo.com/) ([CC BY 4.0 License](https://creativecommons.org/licenses/by/4.0/))
