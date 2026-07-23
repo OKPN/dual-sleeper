@@ -524,11 +524,11 @@ def calculate_bearing_16(lat1, lon1, lat2, lon2):
 
 def check_lightning_alert(lat, lon, lookahead_hours=3):
     """
-    Open-Meteo API を叩いて指定された緯度・経度の現在の天気および今後の雷予報をチェックします。
-    戻り値: (is_thunder_now, weather_code_desc, location_info_str, is_thunder_forecast, forecast_desc)
+    Open-Meteo API を叩いて指定された緯度・経度の現在の天気、今後の雷予報、および雷解除予想時刻をチェックします。
+    戻り値: (is_thunder_now, weather_code_desc, location_info_str, is_thunder_forecast, forecast_desc, clear_time_info)
     """
     if lat is None or lon is None:
-        return False, "位置情報未設定", "", False, "位置情報未設定"
+        return False, "位置情報未設定", "", False, "位置情報未設定", ""
         
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code&hourly=weather_code"
     req = urllib.request.Request(
@@ -573,17 +573,32 @@ def check_lightning_alert(lat, lon, lookahead_hours=3):
                 forecast_desc = f"直近{lookahead_hours}時間以内に雷予報あり" if is_thunder_forecast else f"直近{lookahead_hours}時間内は雷予報なし"
                 
                 # 実況天気コード解釈
-                # 95: 雷雨 (Thunderstorm: Slight or moderate)
-                # 96: 雹を伴う雷雨 (Thunderstorm with slight hail)
-                # 99: 激しい雷雨 (Thunderstorm with heavy hail)
                 is_thunder_now = code in (95, 96, 99)
                 weather_desc = f"⚡ 雷雨/落雷検知 (コード {code})" if is_thunder_now else f"正常 (コード {code})"
                 
-                return is_thunder_now, weather_desc, loc_desc, is_thunder_forecast, forecast_desc
+                # 今後6時間先までの雷解除予想時刻をスキャン
+                clear_time_info = ""
+                if is_thunder_now or is_thunder_forecast:
+                    scan_end = min(start_idx + 7, len(hourly_codes))
+                    found_clear = False
+                    for i in range(start_idx, scan_end):
+                        if hourly_codes[i] not in (95, 96, 99):
+                            t_raw = hourly_times[i] if i < len(hourly_times) else ""
+                            if "T" in t_raw:
+                                t_str = t_raw.split("T")[1][:5]
+                            else:
+                                t_str = t_raw
+                            clear_time_info = f"【 {t_str} 頃 】に雷が通過・解除される見込みです。"
+                            found_clear = True
+                            break
+                    if not found_clear:
+                        clear_time_info = "今後6時間以上雷が継続する見込みです。"
+                
+                return is_thunder_now, weather_desc, loc_desc, is_thunder_forecast, forecast_desc, clear_time_info
     except Exception as e:
-        return False, f"取得エラー: {e}", "", False, f"取得エラー: {e}"
+        return False, f"取得エラー: {e}", "", False, f"取得エラー: {e}", ""
         
-    return False, "データなし", "", False, "データなし"
+    return False, "データなし", "", False, "データなし", ""
 
 def get_weather_report(config):
     """
@@ -657,6 +672,24 @@ def get_weather_report(config):
                 thunder_status_str = "⚡️ **雷雨発生中！ (DANGER)**" if is_thunder_now else "☀️ **雷なし (NORMAL)**"
                 forecast_status_str = f"⚡️ **雷予報あり (WARNING)**" if is_thunder_forecast else "🌤️ **雷予報なし (CLEAR)**"
                 
+                # 雷解除予想時刻
+                clear_info_str = ""
+                if is_thunder_now or is_thunder_forecast:
+                    scan_end = min(start_idx + 7, len(hourly_codes))
+                    found_clear = False
+                    for i in range(start_idx, scan_end):
+                        if hourly_codes[i] not in (95, 96, 99):
+                            t_raw = hourly_times[i] if i < len(hourly_times) else ""
+                            if "T" in t_raw:
+                                t_str = t_raw.split("T")[1][:5]
+                            else:
+                                t_str = t_raw
+                            clear_info_str = f"\n🌤️ **解除見込み:** 【 {t_str} 頃 】に雷が通過・解除される見込みです。"
+                            found_clear = True
+                            break
+                    if not found_clear:
+                        clear_info_str = "\n⚠️ **解除見込み:** 今後6時間以上雷が継続する見込みです。"
+                
                 pc_name = get_computer_name()
                 return (
                     f"🌩️ **[{pc_name}] 現在の天気・防災レポート**\n"
@@ -664,7 +697,7 @@ def get_weather_report(config):
                     f"🌤️ **天候:** {weather_str}\n"
                     f"🌡️ **気温:** `{temp_str}`\n"
                     f"⚡ **実況雷:** {thunder_status_str}\n"
-                    f"🔮 **直近{fc_hours}時間予報:** {forecast_status_str}"
+                    f"🔮 **直近{fc_hours}時間予報:** {forecast_status_str}{clear_info_str}"
                 )
     except Exception as e:
         return f"❌ 天気情報の取得に失敗しました: {e}"
@@ -1355,6 +1388,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     last_lightning_check_time = 0
     lightning_alert_active = False
     is_lightning_forecast_risk = False
+    current_clear_time_info = ""
 
     try:
         while True:
@@ -1463,12 +1497,13 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 
                 if time.time() - last_lightning_check_time >= interval:
                     last_lightning_check_time = time.time()
-                    is_thunder, thunder_msg, loc_desc, is_fc_thunder, fc_msg = check_lightning_alert(lat, lon, lookahead_hours=fc_hours)
+                    is_thunder, thunder_msg, loc_desc, is_fc_thunder, fc_msg, clear_time_info = check_lightning_alert(lat, lon, lookahead_hours=fc_hours)
+                    current_clear_time_info = clear_time_info
                     
                     if fc_enabled:
                         if is_fc_thunder and not is_lightning_forecast_risk:
                             is_lightning_forecast_risk = True
-                            print(f"\n{get_timestamp()} [雷予報検知] ⚡ {fc_msg} が検出されたため、離席スリープの動作を「休止状態（ハイバネート）」へ一時昇格します。")
+                            print(f"\n{get_timestamp()} [雷予報検知] ⚡ {fc_msg} が検出されたため、離席スリープの動作を「休止状態（ハイバネート）」へ一時昇格します。({clear_time_info})")
                         elif not is_fc_thunder and is_lightning_forecast_risk:
                             is_lightning_forecast_risk = False
                             print(f"\n{get_timestamp()} [雷予報解除] 直近{fc_hours}時間内の雷予報がなくなったため、スリープ動作の昇格を解除しました。")
@@ -1485,24 +1520,25 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             )
                             
                             loc_info = f"\n📍 検知位置: {loc_desc}" if loc_desc else ""
+                            clear_info = f"\n🌤️ **解除見込み:** {clear_time_info}" if clear_time_info else ""
                             
                             if should_auto_hibernate:
                                 mode_reason = "always (常時自動)" if hib_mode == "always" else "state2_only (消灯/放置中自動)"
-                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg})")
+                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg} | {clear_time_info})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷自動退避通知】**\n"
-                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}\n\n"
+                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}{clear_info}\n\n"
                                     f"⚡ `auto_hibernate: \"{hib_mode}\"` 設定に従い、PCおよびデータを雷サージから保護するため直ちに「休止状態（ハイバネート）」へ自動移行します。"
                                 )
                                 time.sleep(3.0) # 通知送信完了待ち
                                 execute_power_command(use_hibernate=True)
                             else:
-                                print(f"\n{get_timestamp()} [落雷警報] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されました！({thunder_msg})")
+                                print(f"\n{get_timestamp()} [落雷警報] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されました！({thunder_msg} | {clear_time_info})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷警報アラート】**\n"
-                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}\n\n"
+                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}{clear_info}\n\n"
                                     f"雷サージからPCおよびデータを保護するため、休止状態（ハイバネート）に移行しますか？\n"
                                     f"スマホから「1」または「h」と返信すると、直ちに休止状態（ハイバネート）を予約・実行します。（または /sleep hibernate）"
                                 )
@@ -1929,11 +1965,13 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                     f"·電源予約: `{force_power_mode.upper() if force_power_mode else 'なし'}`"
                                 )
 
+                                weather_clear_msg = f"\n\n🌤️ **落雷/雷予報 解除見込み:**\n{current_clear_time_info}" if current_clear_time_info else ""
+
                                 send_notifications(
                                     config,
                                     f"🔔 **[{pc_name}] まもなく {mode_name} に移行します。**\n"
                                     f"({mode_desc})\n\n"
-                                    f"{status_details_msg}\n\n"
+                                    f"{status_details_msg}{weather_clear_msg}\n\n"
                                     f"スマホから何か文字・数字を送信すると、移行を一時的に10分間延長（モニター消灯状態維持）します。{wol_msg_part}"
                                 )
                                 
