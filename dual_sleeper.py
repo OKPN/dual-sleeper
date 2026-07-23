@@ -522,16 +522,15 @@ def calculate_bearing_16(lat1, lon1, lat2, lon2):
     except Exception:
         return ""
 
-def check_lightning_alert(lat, lon):
+def check_lightning_alert(lat, lon, lookahead_hours=3):
     """
-    Open-Meteo API を叩いて指定された緯度・経度の現在の天気をチェックします。
-    雷雨・落雷コード (95, 96, 99) が検知された場合に True を返します。
-    戻り値: (is_thunder, weather_code_desc, location_info_str)
+    Open-Meteo API を叩いて指定された緯度・経度の現在の天気および今後の雷予報をチェックします。
+    戻り値: (is_thunder_now, weather_code_desc, location_info_str, is_thunder_forecast, forecast_desc)
     """
     if lat is None or lon is None:
-        return False, "位置情報未設定", ""
+        return False, "位置情報未設定", "", False, "位置情報未設定"
         
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code"
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code&hourly=weather_code"
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "DualSleeper/1.0"}
@@ -555,18 +554,36 @@ def check_lightning_alert(lat, lon):
                 else:
                     loc_desc = f"自宅から【{bearing} 約 {dist_km:.1f} km】地点"
                 
-                # 天気コード解釈
+                # 今後の雷予報判定 (hourly)
+                current_time_str = current.get("time", "")
+                hourly_times = data.get("hourly", {}).get("time", [])
+                hourly_codes = data.get("hourly", {}).get("weather_code", [])
+                
+                start_idx = 0
+                if current_time_str and len(current_time_str) >= 13:
+                    match_prefix = current_time_str[:13]
+                    for i, t in enumerate(hourly_times):
+                        if t.startswith(match_prefix):
+                            start_idx = i
+                            break
+                            
+                forecast_codes = hourly_codes[start_idx : start_idx + max(1, lookahead_hours) + 1]
+                is_thunder_forecast = any(c in (95, 96, 99) for c in forecast_codes)
+                
+                forecast_desc = f"直近{lookahead_hours}時間以内に雷予報あり" if is_thunder_forecast else f"直近{lookahead_hours}時間内は雷予報なし"
+                
+                # 実況天気コード解釈
                 # 95: 雷雨 (Thunderstorm: Slight or moderate)
                 # 96: 雹を伴う雷雨 (Thunderstorm with slight hail)
                 # 99: 激しい雷雨 (Thunderstorm with heavy hail)
-                if code in (95, 96, 99):
-                    return True, f"⚡ 雷雨/落雷検知 (コード {code})", loc_desc
-                else:
-                    return False, f"正常 (コード {code})", loc_desc
+                is_thunder_now = code in (95, 96, 99)
+                weather_desc = f"⚡ 雷雨/落雷検知 (コード {code})" if is_thunder_now else f"正常 (コード {code})"
+                
+                return is_thunder_now, weather_desc, loc_desc, is_thunder_forecast, forecast_desc
     except Exception as e:
-        return False, f"取得エラー: {e}", ""
+        return False, f"取得エラー: {e}", "", False, f"取得エラー: {e}"
         
-    return False, "データなし", ""
+    return False, "データなし", "", False, "データなし"
 
 def get_gpu_status(protect_processes):
     """
@@ -701,7 +718,11 @@ def load_config():
             "latitude": 35.6812,
             "longitude": 139.7671,
             "check_interval_seconds": 300,
-            "auto_hibernate": False
+            "auto_hibernate": "off",
+            "forecast_protection": {
+                "enabled": False,
+                "lookahead_hours": 3
+            }
         }
     }
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -1140,7 +1161,14 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             "always": "常時問答無用自動休止"
         }
         hib_label = mode_labels.get(hib_mode, "スマホ通知＆選択")
+        
+        fc_cfg = lightning_cfg.get("forecast_protection", {})
+        fc_enabled = isinstance(fc_cfg, dict) and fc_cfg.get("enabled", False)
+        fc_hours = fc_cfg.get("lookahead_hours", 3) if isinstance(fc_cfg, dict) else 3
+        fc_label = f"有効 (直近{fc_hours}時間内の雷予報で離席スリープを自動休止化)" if fc_enabled else "無効 (初期無効)"
+        
         print(f"  ・落雷保護アラート    : 有効 (位置: {lat}, {lon} | 周期: {interval}秒 | モード: {hib_mode} -> {hib_label})")
+        print(f"  ・落雷予報連動休止    : {fc_label}")
         print("    💡 [ワンポイント] 関東等の落雷ピークは「7月〜8月の14:00〜18:00」です。この時期の常用を強く推奨します。")
     else:
         print("  ・落雷保護アラート    : 無効 (初期無効)")
@@ -1233,6 +1261,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     # 落雷保護監視用変数
     last_lightning_check_time = 0
     lightning_alert_active = False
+    is_lightning_forecast_risk = False
 
     try:
         while True:
@@ -1335,9 +1364,23 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 lat, lon = parse_location(lightning_cfg)
                 interval = lightning_cfg.get("check_interval_seconds", 300)
                 
+                fc_cfg = lightning_cfg.get("forecast_protection", {})
+                fc_enabled = isinstance(fc_cfg, dict) and fc_cfg.get("enabled", False)
+                fc_hours = fc_cfg.get("lookahead_hours", 3) if isinstance(fc_cfg, dict) else 3
+                
                 if time.time() - last_lightning_check_time >= interval:
                     last_lightning_check_time = time.time()
-                    is_thunder, thunder_msg, loc_desc = check_lightning_alert(lat, lon)
+                    is_thunder, thunder_msg, loc_desc, is_fc_thunder, fc_msg = check_lightning_alert(lat, lon, lookahead_hours=fc_hours)
+                    
+                    if fc_enabled:
+                        if is_fc_thunder and not is_lightning_forecast_risk:
+                            is_lightning_forecast_risk = True
+                            print(f"\n{get_timestamp()} [雷予報検知] ⚡ {fc_msg} が検出されたため、離席スリープの動作を「休止状態（ハイバネート）」へ一時昇格します。")
+                        elif not is_fc_thunder and is_lightning_forecast_risk:
+                            is_lightning_forecast_risk = False
+                            print(f"\n{get_timestamp()} [雷予報解除] 直近{fc_hours}時間内の雷予報がなくなったため、スリープ動作の昇格を解除しました。")
+                    else:
+                        is_lightning_forecast_risk = False
                     
                     if is_thunder:
                         if not lightning_alert_active:
@@ -1758,6 +1801,10 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             elif force_power_mode == "sleep":
                                 use_hibernate = False
                                 mode_desc = "手動予約「スタンバイ (スリープ)」"
+                            elif is_lightning_forecast_risk:
+                                use_hibernate = True
+                                fc_hours = config.get("lightning_protection", {}).get("forecast_protection", {}).get("lookahead_hours", 3)
+                                mode_desc = f"雷予報連動 (直近{fc_hours}時間内) により、「休止状態（自動昇格）」"
                             else:
                                 start_h = config.get("hibernate_start_hour")
                                 end_h = config.get("hibernate_end_hour")

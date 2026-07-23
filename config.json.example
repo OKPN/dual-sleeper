@@ -95,10 +95,16 @@
   //   "off"         : 自動休止なし (常にスマホ通知で手動応答待ち)
   //   "state2_only" : 消灯・放置中 (State 2) のみ問答無用で自動休止 (通常作業中はスマホ通知)
   //   "always"      : 状況を問わず常に問答無用で自動休止
+  // forecast_protection:
+  //   直近 lookahead_hours 時間内に雷予報がある場合、無操作スリープの動作を自動的に「休止状態（ハイバネート）」へ事前昇格させます。
   "lightning_protection": {
     "enabled": false,
     "location": "35.6812, 139.7671",
     "check_interval_seconds": 300,
-    "auto_hibernate": "off"
+    "auto_hibernate": "off",
+    "forecast_protection": {
+      "enabled": false,
+      "lookahead_hours": 3
+    }
   }
 }
