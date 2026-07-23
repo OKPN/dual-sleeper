@@ -585,6 +585,92 @@ def check_lightning_alert(lat, lon, lookahead_hours=3):
         
     return False, "データなし", "", False, "データなし"
 
+def get_weather_report(config):
+    """
+    Open-Meteo API を叩いて、現在の天気、気温、落雷実況、落雷予報をフォーマットした Telegram 用 Markdown 文字列を返します。
+    """
+    lightning_cfg = config.get("lightning_protection", {})
+    if not isinstance(lightning_cfg, dict):
+        return "❌ 位置情報が未設定です。config.json の lightning_protection を確認してください。"
+        
+    lat, lon = parse_location(lightning_cfg)
+    if lat is None or lon is None:
+        return "❌ 位置情報が未設定です。config.json の location を確認してください。"
+        
+    fc_cfg = lightning_cfg.get("forecast_protection", {})
+    fc_hours = fc_cfg.get("lookahead_hours", 3) if isinstance(fc_cfg, dict) else 3
+    
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code,temperature_2m&hourly=weather_code"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "DualSleeper/1.0"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode("utf-8"))
+                current = data.get("current", {})
+                code = current.get("weather_code", -1)
+                temp = current.get("temperature_2m", None)
+                
+                res_lat = data.get("latitude", lat)
+                res_lon = data.get("longitude", lon)
+                
+                dist_km = calculate_distance_km(lat, lon, res_lat, res_lon)
+                bearing = calculate_bearing_16(lat, lon, res_lat, res_lon)
+                
+                if dist_km < 0.1 or not bearing:
+                    loc_desc = "自宅直近エリア"
+                else:
+                    loc_desc = f"自宅から【{bearing} 約 {dist_km:.1f} km】"
+                
+                # 天気コード日本語マップ
+                weather_map = {
+                    0: "☀️ 快晴", 1: "🌤️ 晴れ", 2: "⛅ 一部曇り", 3: "☁️ 曇り",
+                    45: "🌫️ 霧", 48: "🌫️ 着氷性の霧",
+                    51: "🚿 弱い小雨", 53: "🚿 小雨", 55: "🚿 強い小雨",
+                    61: "☔ 弱い雨", 63: "☔ 雨", 65: "☔ 強い雨",
+                    71: "❄️ 弱い雪", 73: "❄️ 雪", 75: "❄️ 強い雪",
+                    80: "🌧️ にわか雨", 81: "🌧️ 強いにわか雨", 82: "🌧️ 激しいにわか雨",
+                    95: "⚡ 雷雨", 96: "⚡ 雹を伴う雷雨", 99: "⚡ 激しい雷雨"
+                }
+                weather_str = weather_map.get(code, f"コード {code}")
+                temp_str = f"{temp} °C" if temp is not None else "不明"
+                
+                # 予報解析
+                current_time_str = current.get("time", "")
+                hourly_times = data.get("hourly", {}).get("time", [])
+                hourly_codes = data.get("hourly", {}).get("weather_code", [])
+                
+                start_idx = 0
+                if current_time_str and len(current_time_str) >= 13:
+                    match_prefix = current_time_str[:13]
+                    for i, t in enumerate(hourly_times):
+                        if t.startswith(match_prefix):
+                            start_idx = i
+                            break
+                            
+                forecast_codes = hourly_codes[start_idx : start_idx + max(1, fc_hours) + 1]
+                is_thunder_forecast = any(c in (95, 96, 99) for c in forecast_codes)
+                
+                is_thunder_now = code in (95, 96, 99)
+                thunder_status_str = "⚡️ **雷雨発生中！ (DANGER)**" if is_thunder_now else "☀️ **雷なし (NORMAL)**"
+                forecast_status_str = f"⚡️ **雷予報あり (WARNING)**" if is_thunder_forecast else "🌤️ **雷予報なし (CLEAR)**"
+                
+                pc_name = get_computer_name()
+                return (
+                    f"🌩️ **[{pc_name}] 現在の天気・防災レポート**\n"
+                    f"📍 **観測地点:** {loc_desc}\n"
+                    f"🌤️ **天候:** {weather_str}\n"
+                    f"🌡️ **気温:** `{temp_str}`\n"
+                    f"⚡ **実況雷:** {thunder_status_str}\n"
+                    f"🔮 **直近{fc_hours}時間予報:** {forecast_status_str}"
+                )
+    except Exception as e:
+        return f"❌ 天気情報の取得に失敗しました: {e}"
+        
+    return "❌ 天気情報を取得できませんでした。"
+
 def get_gpu_status(protect_processes):
     """
     NVIDIA GPUの使用率(%) と、現在GPUを使用している保護対象プロセスの有無を判定します。
@@ -1014,7 +1100,13 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         else:
                             reply_text = f"❌ **[{pc_name}]** 無効なモードです。`off`, `desktop`, `always` から選択するか、`server` とだけ送信して切り替えてください。"
                     
-                    # 4. 無効な入力（その他のメッセージ）に対するヘルプ自動応答 (古いコマンドは削除)
+                    # 4. weather コマンドのハンドリング
+                    elif cmd in ("/weather", "weather", "tenki", "/tenki"):
+                        config_tmp = load_config()
+                        reply_text = get_weather_report(config_tmp)
+                        print(f"\n{get_timestamp()} [リモート情報] Telegramから天気レポート要求を受信")
+                    
+                    # 5. 無効な入力（その他のメッセージ）に対するヘルプ自動応答 (古いコマンドは削除)
                     else:
                         reply_text = (
                             f"💡 **[{pc_name}] コマンドヘルプ**\n"
@@ -1025,7 +1117,8 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             f"· `server`: サーバモードの切替\n"
                             f"  (オフ ➔ デスクトップのみ ➔ 常時適用)\n\n"
                             f"📌 **通常コマンド**\n"
-                            f"· `status`: 現在の稼働状況を確認する"
+                            f"· `status` : 現在の稼働状況を確認する\n"
+                            f"· `weather`: 現在の天気・気温・落雷情報を確認する"
                         )
                         
                     if reply_text:
