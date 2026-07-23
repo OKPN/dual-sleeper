@@ -109,6 +109,7 @@
 *   `config.json`: **[ローカル専用]** 実際の動作設定ファイル（`.gitignore` により自動除外）。
 *   `requirements.txt`: 動作に必要な外部ライブラリ（`psutil`）。
 *   `test_webhook.bat`: **[テスト用]** Discord / Telegram通知の導通テスト用バッチファイル。
+*   `test_weather.bat`: **[テスト用]** Open-Meteo API 天気・落雷・予報データの疎通テスト用バッチファイル（ダブルクリックで実行可能）。
 
 ---
 
