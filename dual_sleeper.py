@@ -550,9 +550,9 @@ def check_lightning_alert(lat, lon, lookahead_hours=3):
                 bearing = calculate_bearing_16(lat, lon, res_lat, res_lon)
                 
                 if dist_km < 0.1 or not bearing:
-                    loc_desc = "自宅直近エリア"
+                    loc_desc = "端末直近エリア"
                 else:
-                    loc_desc = f"自宅から【{bearing} 約 {dist_km:.1f} km】地点"
+                    loc_desc = f"端末から【{bearing} 約 {dist_km:.1f} km】地点"
                 
                 # 今後の雷予報判定 (hourly)
                 current_time_str = current.get("time", "")
@@ -620,9 +620,9 @@ def get_weather_report(config):
                 bearing = calculate_bearing_16(lat, lon, res_lat, res_lon)
                 
                 if dist_km < 0.1 or not bearing:
-                    loc_desc = "自宅直近エリア"
+                    loc_desc = "端末直近エリア"
                 else:
-                    loc_desc = f"自宅から【{bearing} 約 {dist_km:.1f} km】"
+                    loc_desc = f"端末から【{bearing} 約 {dist_km:.1f} km】"
                 
                 # 天気コード日本語マップ
                 weather_map = {
@@ -1488,7 +1488,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             
                             if should_auto_hibernate:
                                 mode_reason = "always (常時自動)" if hib_mode == "always" else "state2_only (消灯/放置中自動)"
-                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ {loc_desc or '自宅周辺'}で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg})")
+                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷自動退避通知】**\n"
@@ -1498,7 +1498,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                 time.sleep(3.0) # 通知送信完了待ち
                                 execute_power_command(use_hibernate=True)
                             else:
-                                print(f"\n{get_timestamp()} [落雷警報] ⚡ {loc_desc or '自宅周辺'}で雷雨/落雷が検知されました！({thunder_msg})")
+                                print(f"\n{get_timestamp()} [落雷警報] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されました！({thunder_msg})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷警報アラート】**\n"
@@ -1509,7 +1509,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     else:
                         if lightning_alert_active:
                             lightning_alert_active = False
-                            print(f"\n{get_timestamp()} [落雷警報解除] 自宅周辺の雷雨/落雷警報が解除されました。")
+                            print(f"\n{get_timestamp()} [落雷警報解除] 端末周辺の雷雨/落雷警報が解除されました。")
 
             # 状態遷移 (State 変更) が発生した時だけ、通信統計データを初期化する
             if state != last_state:

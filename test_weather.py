@@ -61,7 +61,7 @@ def main():
     
     print(f"レスポンス時間: {elapsed:.2f} 秒\n")
     print("[取得・解析結果]")
-    print(f"  ・位置解析           : {loc_desc or '自宅直近エリア'}")
+    print(f"  ・位置解析           : {loc_desc or '端末直近エリア'}")
     print(f"  ・現在の実況天気     : {desc_now}")
     print(f"  ・実況雷検知ステータス : {'【雷発生中！】(DANGER)' if is_now else '【雷なし】(NORMAL)'}")
     print(f"  ・直近 {fc_hours} 時間雷予報   : {desc_fc}")
