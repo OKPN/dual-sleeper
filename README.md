@@ -43,13 +43,13 @@
 ### 📱 2. 通知 ＆ リモート操作（Discord Webhook ＆ Telegram Bot）
 用途に合わせてお好みの通知・操作手段を選択できます。
 *   **Discord Webhook (おまけお手軽機能 / Webhook URLを貼るだけ):**
-    Webhook URLを設定するだけで導入できる手軽な通知機能です。スリープ予告通知の文面に **etherwake 専用 WoL 遠隔起動リンク (`wol_url`)** を含めることができるため、普段使いの Discord アプリで通知を受け取り、リンクをタップするだけで自宅PCをワンタップ遠隔起動できます。
+    Webhook URLを設定するだけで導入できる手軽な通知機能です。スリープ予告通知の文面に **cloudwaker 専用 WoL 遠隔起動リンク (`wol_url`)** を含めることができるため、普段使いの Discord アプリで通知を受け取り、リンクをタップするだけで自宅PCをワンタップ遠隔起動できます。
 *   **Telegram Bot (さらに高機能な双方向コントロール):**
     スマホからさらに高度なリモート操作を行いたい方向けのフル機能連携です。スリープ予告30秒前通知に対してスマホから1文字返信するだけで「画面消灯のまま10分スリープ延長」ができるほか、`/sleep`（電源予約トグル）、`/server`（サーバモード切替）、`/status`（詳細稼働確認）、`/weather`（現在の天気・気温・落雷・予報確認）をスマホからインタラクティブに操作できます。
 
-### 🔗 3. 【etherwake 専用 WoL連携】スリープ通知からスマホ1タップで遠隔起動
-*   **etherwake 専用 Wake on LAN (WoL) 遠隔起動リンクの自動埋め込み:**
-    `config.json` の `"wol_url"` に、制作者が運営するWeb WoL送信サービス **[etherwake.k7m.f5.si](https://etherwake.k7m.f5.si)** で発行した自身の起動用URLを設定しておくと、Discord や Telegram に届くスリープ予告通知の最下部に「WoL遠隔起動リンク」が自動挿入されます。
+### 🔗 3. 【cloudwaker 専用 WoL連携】スリープ通知からスマホ1タップで遠隔起動
+*   **cloudwaker 専用 Wake on LAN (WoL) 遠隔起動リンクの自動埋め込み:**
+    `config.json` の `"wol_url"` に、制作者が運営するWeb WoL送信サービス **[cloudwaker.k7m.f5.si](https://cloudwaker.k7m.f5.si/)** で発行した自身の起動用URLを設定しておくと、Discord や Telegram に届くスリープ予告通知の最下部に「WoL遠隔起動リンク」が自動挿入されます。
 
 ### 📊 4. 【通信統計】スパイクに騙されない「中央値 (Median)」計測
 *   **外れ値（高速バースト通信）の無効化:**
@@ -86,13 +86,13 @@
 
 **Dual Sleeper** は、**WoL (Wake on LAN)** 技術と組み合わせることで、電気代を極限まで節約した完璧な「プライベート・リモート開発サーバー / リモートPC」を構築することができます。
 
-### 🌐 制作者提供の Web WoL サービス: etherwake.k7m.f5.si
-本アプリのWoL連携機能は、制作者が運営・提供するWeb WoL送信サービス **[etherwake.k7m.f5.si](https://etherwake.k7m.f5.si)** の専用機能です。
+### 🌐 制作者提供の Web WoL サービス: cloudwaker.k7m.f5.si
+本アプリのWoL連携機能は、制作者が運営・提供するWeb WoL送信サービス **[cloudwaker.k7m.f5.si](https://cloudwaker.k7m.f5.si/)** の専用機能です。
 
 1.  **`config.json` への設定方法:**
-    `https://etherwake.k7m.f5.si` で生成した自身の起動用URLを `config.json` の `"wol_url"` 欄に登録します。
+    `https://cloudwaker.k7m.f5.si/` で生成した自身の起動用URLを `config.json` の `"wol_url"` 欄に登録します。
     ```json
-    "wol_url": "https://etherwake.k7m.f5.si/?data=..."
+    "wol_url": "https://cloudwaker.k7m.f5.si/?data=..."
     ```
 2.  **スマホ通知からのワンタップ起動:**
     PCがスリープに入る直前、Discord や Telegram に届く通知の最下部に上記のWoLリンクが自動的に掲載されます。
@@ -129,7 +129,7 @@
 | `discord_webhook_url` | `""` | URL | Discord Webhook URL（お手軽通知機能）。 |
 | `telegram_bot_token` | `""` | トークン | Telegram Bot API Token（高機能双方向操作用）。 |
 | `telegram_chat_id` | `""` | ID | Telegram 宛先チャットID。 |
-| `wol_url` | `""` | URL | スリープ通知内に自動挿入する etherwake 専用の Wake on LAN 遠隔起動リンク（制作者運営の **`https://etherwake.k7m.f5.si`** のURL）。 |
+| `wol_url` | `""` | URL | スリープ通知内に自動挿入する cloudwaker 専用の Wake on LAN 遠隔起動リンク（制作者運営の **`https://cloudwaker.k7m.f5.si/`** のURL）。 |
 | `sleep_pending_seconds` | `30` | 秒 | スリープ予告通知後の猶予時間。 |
 | `lightning_protection` | `{}` | オブジェクト | 落雷防災アラート設定。`enabled`（有効化）、`location`（Googleマップ位置コピペ）、`auto_hibernate`（`"off"`, `"state2_only"`, `"always"` モード）。 |
 
@@ -142,7 +142,7 @@
 * 🎙️ **WASAPI オーディオ保護:** Windows Core Audio API 直叩きによる Discord / LINE / Zoom 等の通話中・音声ストリーム自動検知＆スリープ保護（寝落ち通話対応）。
 * 📊 **通信中央値 (Median) 集計:** ノイズ通信や一時的スパイクに騙されない実効通信速度の正確な算出。
 * 📱 **通知 ＆ リモート拡張:** お手軽な Discord Webhook（`wol_url` ワンタップ起動対応）と、さらに高機能な Telegram Bot（双方向コマンド＆1文字返信延長）の2パターン対応。
-* 🔗 **etherwake 専用 WoL 連携:** 制作者提供の Web WoL サービス（`https://etherwake.k7m.f5.si`）への直通遠隔起動リンク自動挿入。
+* 🔗 **cloudwaker 専用 WoL 連携:** 制作者提供の Web WoL サービス（`https://cloudwaker.k7m.f5.si/`）への直通遠隔起動リンク自動挿入。
 * 🎮 **GPU 30% スマート判定:** AI学習/推論（Python等）の完全保護と、ゲーム無駄回しの自動スリープ判別。
 * ⌨️ **入力デバイス＆ホットキー:** XInput ゲームパッド監視 ＆ `Win + Ctrl + Shift + Alt + M` 即時トグル。
 
