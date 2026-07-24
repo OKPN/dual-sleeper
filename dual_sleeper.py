@@ -498,18 +498,27 @@ def calculate_distance_km(lat1, lon1, lat2, lon2):
     except Exception:
         return 0.0
 
-def calculate_bearing_16(lat1, lon1, lat2, lon2):
+def calculate_bearing_deg(lat1, lon1, lat2, lon2):
     """
-    地点1(自宅)から見た地点2(気象観測ポイント)の方角を16方位("北西", "南南西"など)で返します。
+    地点1から見た地点2の方位角(0-360度)を計算します。
     """
     try:
         phi1, phi2 = math.radians(lat1), math.radians(lat2)
         d_lam = math.radians(lon2 - lon1)
-        
         y = math.sin(d_lam) * math.cos(phi2)
         x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(d_lam)
-        
-        bearing = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+        return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+    except Exception:
+        return None
+
+def calculate_bearing_16(lat1, lon1, lat2, lon2):
+    """
+    地点1(端末)から見た地点2(気象観測ポイント)の方角を16方位("北西", "南南西"など)で返します。
+    """
+    try:
+        bearing = calculate_bearing_deg(lat1, lon1, lat2, lon2)
+        if bearing is None:
+            return ""
         
         directions = [
             "北", "北北東", "北東", "東北東",
@@ -522,15 +531,52 @@ def calculate_bearing_16(lat1, lon1, lat2, lon2):
     except Exception:
         return ""
 
+def calculate_wind_approach(lat1, lon1, lat2, lon2, wind_deg):
+    """
+    観測地点(lat2, lon2)から端末(lat1, lon1)への方向ベクトルと、風向(wind_deg)から
+    雷雲が端末へ「接近中」「遠ざかり中」「並行移動」かを判定します。
+    wind_deg: 風が吹いてくる方位角 (0-360度)
+    """
+    if lat1 is None or lon1 is None or lat2 is None or lon2 is None or wind_deg is None:
+        return "風向データなし", 0
+        
+    # 観測地点 -> 端末 への方位角
+    bearing_to_target = calculate_bearing_deg(lat2, lon2, lat1, lon1)
+    if bearing_to_target is None:
+        return "解析不能", 0
+        
+    # 風が吹き去る方向 (雷雲の移動ベクトル方向) = 風向 + 180度
+    move_deg = (float(wind_deg) + 180.0) % 360.0
+    
+    # 移動方向と端末方向の角度差 (0-180度)
+    diff = abs(move_deg - bearing_to_target) % 360.0
+    if diff > 180.0:
+        diff = 360.0 - diff
+        
+    if diff <= 45.0:
+        return "🏃💨 端末へ接近中！", 15
+    elif diff >= 135.0:
+        return "🍃 端末から遠ざかり中", -15
+    else:
+        return "➡️ 端末横を通過・並行移動中", 0
+
 def check_lightning_alert(lat, lon, lookahead_hours=3):
     """
-    Open-Meteo API を叩いて指定された緯度・経度の現在の天気、今後の雷予報、および雷解除予想時刻をチェックします。
-    戻り値: (is_thunder_now, weather_code_desc, location_info_str, is_thunder_forecast, forecast_desc, clear_time_info)
+    Open-Meteo API を叩いてマルチグリッド一括取得、風向ベクトル判定、サージリスクスコア(%)を総合計算します。
+    戻り値: (is_thunder_now, weather_code_desc, location_info_str, is_thunder_forecast, forecast_desc, clear_time_info, risk_score, approach_desc)
     """
     if lat is None or lon is None:
-        return False, "位置情報未設定", "", False, "位置情報未設定", ""
+        return False, "位置情報未設定", "", False, "位置情報未設定", "", 0, "位置未設定"
         
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code&hourly=weather_code"
+    # マルチグリッド座標 (端末中心 + 東西南北 Offset 約 4km)
+    delta = 0.04
+    lats = [lat, lat + delta, lat - delta, lat, lat]
+    lons = [lon, lon, lon, lon + delta, lon - delta]
+    
+    lat_str = ",".join(f"{x:.4f}" for x in lats)
+    lon_str = ",".join(f"{x:.4f}" for x in lons)
+    
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat_str}&longitude={lon_str}&current=weather_code,temperature_2m,wind_speed_10m,wind_direction_10m&hourly=weather_code"
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "DualSleeper/1.0"}
@@ -538,26 +584,50 @@ def check_lightning_alert(lat, lon, lookahead_hours=3):
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
             if response.status == 200:
-                data = json.loads(response.read().decode("utf-8"))
-                current = data.get("current", {})
-                code = current.get("weather_code", -1)
+                raw_json = json.loads(response.read().decode("utf-8"))
+                # 複数地点のリクエストの場合、リストで返ってくる
+                data_list = raw_json if isinstance(raw_json, list) else [raw_json]
                 
-                # APIが応答した気象グリッドの緯度経度
-                res_lat = data.get("latitude", lat)
-                res_lon = data.get("longitude", lon)
+                # 端末中心のデータ (インデックス 0)
+                center_data = data_list[0]
+                current_center = center_data.get("current", {})
+                center_code = current_center.get("weather_code", -1)
+                wind_speed = current_center.get("wind_speed_10m", 0.0)
+                wind_deg = current_center.get("wind_direction_10m", 0.0)
                 
-                dist_km = calculate_distance_km(lat, lon, res_lat, res_lon)
-                bearing = calculate_bearing_16(lat, lon, res_lat, res_lon)
+                # マルチグリッドの各地点を解析
+                grid_info = []
+                is_thunder_now = False
+                min_dist_km = 999.0
+                closest_bearing = ""
+                closest_lat, closest_lon = lat, lon
                 
-                if dist_km < 0.1 or not bearing:
+                for idx, d in enumerate(data_list):
+                    res_lat = d.get("latitude", lats[idx])
+                    res_lon = d.get("longitude", lons[idx])
+                    curr = d.get("current", {})
+                    code = curr.get("weather_code", -1)
+                    
+                    dist_km = calculate_distance_km(lat, lon, res_lat, res_lon)
+                    bearing = calculate_bearing_16(lat, lon, res_lat, res_lon)
+                    
+                    if code in (95, 96, 99):
+                        is_thunder_now = True
+                        
+                    if dist_km < min_dist_km:
+                        min_dist_km = dist_km
+                        closest_bearing = bearing
+                        closest_lat, closest_lon = res_lat, res_lon
+                        
+                if min_dist_km < 0.1 or not closest_bearing:
                     loc_desc = "端末直近エリア"
                 else:
-                    loc_desc = f"端末から【{bearing} 約 {dist_km:.1f} km】地点"
+                    loc_desc = f"端末から【{closest_bearing} 約 {min_dist_km:.1f} km】地点"
                 
-                # 今後の雷予報判定 (hourly)
-                current_time_str = current.get("time", "")
-                hourly_times = data.get("hourly", {}).get("time", [])
-                hourly_codes = data.get("hourly", {}).get("weather_code", [])
+                # 予報解析 (センターグリッド)
+                current_time_str = current_center.get("time", "")
+                hourly_times = center_data.get("hourly", {}).get("time", [])
+                hourly_codes = center_data.get("hourly", {}).get("weather_code", [])
                 
                 start_idx = 0
                 if current_time_str and len(current_time_str) >= 13:
@@ -569,14 +639,9 @@ def check_lightning_alert(lat, lon, lookahead_hours=3):
                             
                 forecast_codes = hourly_codes[start_idx : start_idx + max(1, lookahead_hours) + 1]
                 is_thunder_forecast = any(c in (95, 96, 99) for c in forecast_codes)
-                
                 forecast_desc = f"直近{lookahead_hours}時間以内に雷予報あり" if is_thunder_forecast else f"直近{lookahead_hours}時間内は雷予報なし"
                 
-                # 実況天気コード解釈
-                is_thunder_now = code in (95, 96, 99)
-                weather_desc = f"⚡ 雷雨/落雷検知 (コード {code})" if is_thunder_now else f"正常 (コード {code})"
-                
-                # 今後6時間先までの雷解除予想時刻をスキャン
+                # 雷解除予想時刻のスキャン
                 clear_time_info = ""
                 if is_thunder_now or is_thunder_forecast:
                     scan_end = min(start_idx + 7, len(hourly_codes))
@@ -584,25 +649,49 @@ def check_lightning_alert(lat, lon, lookahead_hours=3):
                     for i in range(start_idx, scan_end):
                         if hourly_codes[i] not in (95, 96, 99):
                             t_raw = hourly_times[i] if i < len(hourly_times) else ""
-                            if "T" in t_raw:
-                                t_str = t_raw.split("T")[1][:5]
-                            else:
-                                t_str = t_raw
+                            t_str = t_raw.split("T")[1][:5] if "T" in t_raw else t_raw
                             clear_time_info = f"【 {t_str} 頃 】に雷が通過・解除される見込みです。"
                             found_clear = True
                             break
                     if not found_clear:
                         clear_time_info = "今後6時間以上雷が継続する見込みです。"
+                        
+                # 風向・移動ベクトル接近判定
+                approach_desc, wind_risk_mod = calculate_wind_approach(lat, lon, closest_lat, closest_lon, wind_deg)
                 
-                return is_thunder_now, weather_desc, loc_desc, is_thunder_forecast, forecast_desc, clear_time_info
+                # サージ影響度リスクスコア (0% - 100%) の統合算出
+                # 基礎距離リスク
+                if min_dist_km <= 1.0:
+                    base_risk = 85.0
+                elif min_dist_km <= 15.0:
+                    base_risk = 85.0 * (1.0 - (min_dist_km - 1.0) / 14.0)
+                else:
+                    base_risk = 0.0
+                    
+                if is_thunder_now:
+                    base_risk += 20.0
+                elif is_thunder_forecast:
+                    base_risk += 10.0
+                    
+                if is_thunder_now or is_thunder_forecast:
+                    base_risk += wind_risk_mod
+                    
+                risk_score = max(0, min(100, int(round(base_risk))))
+                if not is_thunder_now and not is_thunder_forecast and risk_score < 10:
+                    risk_score = 0
+                    approach_desc = "☀️ 平穏（雷の影響なし）"
+                    
+                weather_desc = f"⚡ 雷雨/落雷検知 (コード {center_code})" if is_thunder_now else f"正常 (コード {center_code})"
+                
+                return is_thunder_now, weather_desc, loc_desc, is_thunder_forecast, forecast_desc, clear_time_info, risk_score, approach_desc
     except Exception as e:
-        return False, f"取得エラー: {e}", "", False, f"取得エラー: {e}", ""
+        return False, f"取得エラー: {e}", "", False, f"取得エラー: {e}", "", 0, f"取得エラー: {e}"
         
-    return False, "データなし", "", False, "データなし", ""
+    return False, "データなし", "", False, "データなし", "", 0, "データなし"
 
 def get_weather_report(config):
     """
-    Open-Meteo API を叩いて、現在の天気、気温、落雷実況、落雷予報をフォーマットした Telegram 用 Markdown 文字列を返します。
+    Open-Meteo API を叩いて、現在の天気、気温、風速・風向、落雷リスク、接近情報、落雷予報をフォーマットした Telegram 用 Markdown 文字列を返します。
     """
     lightning_cfg = config.get("lightning_protection", {})
     if not isinstance(lightning_cfg, dict):
@@ -615,31 +704,24 @@ def get_weather_report(config):
     fc_cfg = lightning_cfg.get("forecast_protection", {})
     fc_hours = fc_cfg.get("lookahead_hours", 3) if isinstance(fc_cfg, dict) else 3
     
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code,temperature_2m&hourly=weather_code"
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "DualSleeper/1.0"}
-    )
+    is_now, weather_desc, loc_desc, is_fc, forecast_desc, clear_info_str, risk_score, approach_desc = check_lightning_alert(lat, lon, lookahead_hours=fc_hours)
+    
+    # センターデータの詳細取得 (気温・風向・風速)
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=weather_code,temperature_2m,wind_speed_10m,wind_direction_10m"
+    temp_str = "不明"
+    wind_info_str = "不明"
+    weather_str = weather_desc
     try:
+        req = urllib.request.Request(url, headers={"User-Agent": "DualSleeper/1.0"})
         with urllib.request.urlopen(req, timeout=10) as response:
             if response.status == 200:
                 data = json.loads(response.read().decode("utf-8"))
-                current = data.get("current", {})
-                code = current.get("weather_code", -1)
-                temp = current.get("temperature_2m", None)
+                curr = data.get("current", {})
+                code = curr.get("weather_code", -1)
+                temp = curr.get("temperature_2m", None)
+                w_speed = curr.get("wind_speed_10m", None)
+                w_deg = curr.get("wind_direction_10m", None)
                 
-                res_lat = data.get("latitude", lat)
-                res_lon = data.get("longitude", lon)
-                
-                dist_km = calculate_distance_km(lat, lon, res_lat, res_lon)
-                bearing = calculate_bearing_16(lat, lon, res_lat, res_lon)
-                
-                if dist_km < 0.1 or not bearing:
-                    loc_desc = "端末直近エリア"
-                else:
-                    loc_desc = f"端末から【{bearing} 約 {dist_km:.1f} km】"
-                
-                # 天気コード日本語マップ
                 weather_map = {
                     0: "☀️ 快晴", 1: "🌤️ 晴れ", 2: "⛅ 一部曇り", 3: "☁️ 曇り",
                     45: "🌫️ 霧", 48: "🌫️ 着氷性の霧",
@@ -652,57 +734,30 @@ def get_weather_report(config):
                 weather_str = weather_map.get(code, f"コード {code}")
                 temp_str = f"{temp} °C" if temp is not None else "不明"
                 
-                # 予報解析
-                current_time_str = current.get("time", "")
-                hourly_times = data.get("hourly", {}).get("time", [])
-                hourly_codes = data.get("hourly", {}).get("weather_code", [])
-                
-                start_idx = 0
-                if current_time_str and len(current_time_str) >= 13:
-                    match_prefix = current_time_str[:13]
-                    for i, t in enumerate(hourly_times):
-                        if t.startswith(match_prefix):
-                            start_idx = i
-                            break
-                            
-                forecast_codes = hourly_codes[start_idx : start_idx + max(1, fc_hours) + 1]
-                is_thunder_forecast = any(c in (95, 96, 99) for c in forecast_codes)
-                
-                is_thunder_now = code in (95, 96, 99)
-                thunder_status_str = "⚡️ **雷雨発生中！ (DANGER)**" if is_thunder_now else "☀️ **雷なし (NORMAL)**"
-                forecast_status_str = f"⚡️ **雷予報あり (WARNING)**" if is_thunder_forecast else "🌤️ **雷予報なし (CLEAR)**"
-                
-                # 雷解除予想時刻
-                clear_info_str = ""
-                if is_thunder_now or is_thunder_forecast:
-                    scan_end = min(start_idx + 7, len(hourly_codes))
-                    found_clear = False
-                    for i in range(start_idx, scan_end):
-                        if hourly_codes[i] not in (95, 96, 99):
-                            t_raw = hourly_times[i] if i < len(hourly_times) else ""
-                            if "T" in t_raw:
-                                t_str = t_raw.split("T")[1][:5]
-                            else:
-                                t_str = t_raw
-                            clear_info_str = f"\n🌤️ **解除見込み:** 【 {t_str} 頃 】に雷が通過・解除される見込みです。"
-                            found_clear = True
-                            break
-                    if not found_clear:
-                        clear_info_str = "\n⚠️ **解除見込み:** 今後6時間以上雷が継続する見込みです。"
-                
-                pc_name = get_computer_name()
-                return (
-                    f"🌩️ **[{pc_name}] 現在の天気・防災レポート**\n"
-                    f"📍 **観測地点:** {loc_desc}\n"
-                    f"🌤️ **天候:** {weather_str}\n"
-                    f"🌡️ **気温:** `{temp_str}`\n"
-                    f"⚡ **実況雷:** {thunder_status_str}\n"
-                    f"🔮 **直近{fc_hours}時間予報:** {forecast_status_str}{clear_info_str}"
-                )
-    except Exception as e:
-        return f"❌ 天気情報の取得に失敗しました: {e}"
+                if w_deg is not None and w_speed is not None:
+                    w_bearing = calculate_bearing_16(0, 0, 0, 0) # ダミーではなく風向を文字化
+                    dir_idx = int((float(w_deg) + 11.25) / 22.5) % 16
+                    dirs = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"]
+                    w_dir_name = dirs[dir_idx]
+                    wind_info_str = f"{w_speed} m/s (風向: {w_dir_name} {w_deg:.0f}°)"
+    except Exception:
+        pass
         
-    return "❌ 天気情報を取得できませんでした。"
+    thunder_status_str = "⚡️ **雷雨発生中！ (DANGER)**" if is_now else "☀️ **雷なし (NORMAL)**"
+    forecast_status_str = f"⚡️ **雷予報あり (WARNING)**" if is_fc else "🌤️ **雷予報なし (CLEAR)**"
+    
+    clear_msg_part = f"\n🌤️ **解除見込み:** {clear_info_str}" if clear_info_str else ""
+    
+    pc_name = get_computer_name()
+    return (
+        f"🌩️ **[{pc_name}] 現在の天気・防災レポート**\n"
+        f"📍 **観測地点:** {loc_desc}\n"
+        f"🌤️ **天候:** {weather_str}\n"
+        f"🌡️ **気温:** `{temp_str}` | **風速:** `{wind_info_str}`\n"
+        f"⚡ **実況雷:** {thunder_status_str}\n"
+        f"📊 **サージリスク度:** `{risk_score}%` ({approach_desc})\n"
+        f"🔮 **直近{fc_hours}時間予報:** {forecast_status_str}{clear_msg_part}"
+    )
 
 def get_gpu_status(protect_processes):
     """
@@ -1497,13 +1552,13 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 
                 if time.time() - last_lightning_check_time >= interval:
                     last_lightning_check_time = time.time()
-                    is_thunder, thunder_msg, loc_desc, is_fc_thunder, fc_msg, clear_time_info = check_lightning_alert(lat, lon, lookahead_hours=fc_hours)
+                    is_thunder, thunder_msg, loc_desc, is_fc_thunder, fc_msg, clear_time_info, risk_score, approach_desc = check_lightning_alert(lat, lon, lookahead_hours=fc_hours)
                     current_clear_time_info = clear_time_info
                     
                     if fc_enabled:
                         if is_fc_thunder and not is_lightning_forecast_risk:
                             is_lightning_forecast_risk = True
-                            print(f"\n{get_timestamp()} [雷予報検知] ⚡ {fc_msg} が検出されたため、離席スリープの動作を「休止状態（ハイバネート）」へ一時昇格します。({clear_time_info})")
+                            print(f"\n{get_timestamp()} [雷予報検知] ⚡ {fc_msg} が検出されたため、離席スリープの動作を「休止状態（ハイバネート）」へ一時昇格します。({clear_time_info} | サージリスク: {risk_score}%)")
                         elif not is_fc_thunder and is_lightning_forecast_risk:
                             is_lightning_forecast_risk = False
                             print(f"\n{get_timestamp()} [雷予報解除] 直近{fc_hours}時間内の雷予報がなくなったため、スリープ動作の昇格を解除しました。")
@@ -1521,24 +1576,25 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             
                             loc_info = f"\n📍 検知位置: {loc_desc}" if loc_desc else ""
                             clear_info = f"\n🌤️ **解除見込み:** {clear_time_info}" if clear_time_info else ""
+                            risk_info = f"\n📊 **サージリスク度:** `{risk_score}%` ({approach_desc})"
                             
                             if should_auto_hibernate:
                                 mode_reason = "always (常時自動)" if hib_mode == "always" else "state2_only (消灯/放置中自動)"
-                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg} | {clear_time_info})")
+                                print(f"\n{get_timestamp()} [落雷自動退避] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されたため、auto_hibernate設定 ({mode_reason}) に従い「休止状態（ハイバネート）」へ問答無用で移行します！({thunder_msg} | リスク:{risk_score}% | {clear_time_info})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷自動退避通知】**\n"
-                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}{clear_info}\n\n"
+                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}{risk_info}{clear_info}\n\n"
                                     f"⚡ `auto_hibernate: \"{hib_mode}\"` 設定に従い、PCおよびデータを雷サージから保護するため直ちに「休止状態（ハイバネート）」へ自動移行します。"
                                 )
                                 time.sleep(3.0) # 通知送信完了待ち
                                 execute_power_command(use_hibernate=True)
                             else:
-                                print(f"\n{get_timestamp()} [落雷警報] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されました！({thunder_msg} | {clear_time_info})")
+                                print(f"\n{get_timestamp()} [落雷警報] ⚡ {loc_desc or '端末周辺'}で雷雨/落雷が検知されました！({thunder_msg} | リスク:{risk_score}% | {clear_time_info})")
                                 send_notifications(
                                     config,
                                     f"⚡ **[{pc_name}] 【落雷警報アラート】**\n"
-                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}{clear_info}\n\n"
+                                    f"登録地点の周辺で雷雨・落雷が検知されました！{loc_info}{risk_info}{clear_info}\n\n"
                                     f"雷サージからPCおよびデータを保護するため、休止状態（ハイバネート）に移行しますか？\n"
                                     f"スマホから「1」または「h」と返信すると、直ちに休止状態（ハイバネート）を予約・実行します。（または /sleep hibernate）"
                                 )
