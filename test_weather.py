@@ -56,18 +56,16 @@ def main():
         
     print("Open-Meteo API へアクセス中...")
     start_t = time.time()
-    is_now, desc_now, loc_desc, is_fc, desc_fc, clear_info, risk_score, approach_desc = check_lightning_alert(lat, lon, lookahead_hours=fc_hours)
+    is_now, desc_now, loc_desc, is_fc, desc_fc, clear_info = check_lightning_alert(lat, lon, lookahead_hours=fc_hours)
     elapsed = time.time() - start_t
     
     print(f"レスポンス時間: {elapsed:.2f} 秒\n")
     print("[取得・解析結果]")
-    print(f"  ・マルチグリッド位置 : {loc_desc or '端末直近エリア'}")
+    print(f"  ・位置解析           : {loc_desc or '端末直近エリア'}")
     print(f"  ・現在の実況天気     : {desc_now}")
     print(f"  ・実況雷検知ステータス : {'【雷発生中！】(DANGER)' if is_now else '【雷なし】(NORMAL)'}")
     print(f"  ・直近 {fc_hours} 時間雷予報   : {desc_fc}")
     print(f"  ・予報雷ステータス   : {'【今後雷の可能性あり】(WARNING)' if is_fc else '【今後も雷予報なし】(CLEAR)'}")
-    print(f"  ・雷雲ベクトル・接近 : {approach_desc}")
-    print(f"  ・サージリスク度     : {risk_score} %")
     print(f"  ・雷解除予想時間     : {clear_info if clear_info else 'なし (平穏)'}")
     print("=" * 65)
     print("APIの疎通・データ解析テストが正常に完了しました。\n")
