@@ -1,0 +1,16 @@
+# ローカルのプライベート設定ファイルを無視
+config.json
+
+# Pythonのキャッシュファイルを無視
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+# 仮想環境ディレクトリを無視
+.venv/
+venv/
+env/
+
+# ログファイルを無視
+*.log
+gpu_monitor.log
