@@ -1278,7 +1278,7 @@ def load_config():
             "lmstudio.exe", "lm-studio.exe", "lms.exe",
             "vmmemwsl", "wsl.exe", "wslhost.exe"
         ],
-        "gpu_protect_min_vram_mb": 500,
+        "gpu_protect_min_vram_mb": 4000,
         "gpu_limit_percent": 40,
         "game_gpu_threshold_percent": 30,
         "high_network_limit_kbs": 625.0,

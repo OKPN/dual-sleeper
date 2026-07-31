@@ -160,7 +160,7 @@
 | | `high_network_limit_kbs` | `625.0` | KB/s | 配信中などの高トラフィックとみなす保護しきい値（5 Mbps相当）。 |
 | | `network_check_duration_seconds` | `30` | 秒 | 放置判定のため通信速度（中央値）を集計する時間。 |
 | **GPU・アプリ保護**| `gpu_protect_processes` | `["python.exe", ...]` | リスト | AI学習・推論など保護対象とするGPUプロセス名一覧。 |
-| | `gpu_protect_min_vram_mb` | `500` | MB | AI保護プロセスが本物のAI処理中か判断する最小VRAM消費量しきい値。 |
+| | `gpu_protect_min_vram_mb` | `4000` | MB | AI保護プロセスが本物のAI処理中か判断する最小VRAM消費量しきい値（初期値: 4000 MB / 4GB）。 |
 | | `gpu_limit_percent` | `40` | ％ | 保護対象プロセス実行時にスリープを阻止するGPU使用率しきい値（初期値: 40%）。 |
 | | `game_gpu_threshold_percent` | `30` | ％ | ゲーム等のGPU使用放置とみなす判定しきい値。 |
 | | `keep_awake_window_titles` | `["youtube:20", ...]`| リスト | 点灯・稼働延長を行うウィンドウタイトルと時間（分）。 |
