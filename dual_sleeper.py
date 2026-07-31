@@ -1261,7 +1261,6 @@ def load_config():
         "wakeup_mouse_grace_seconds": 20,
         "wakeup_active_threshold_seconds": 5,
         "force_sleep_on_dialog": False,
-        "notify_on_sleep_failure": True,
         "power_plan_control": {
             "enabled": False,
             "restore_on_exit": True,
@@ -2805,12 +2804,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                 # 15秒未満で戻ってきた ➔ スリープ失敗（保存確認ダイアログ等のブロック）、または即時誤復帰！
                                 print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（またはダイアログ等でブロックされた）ため、30秒後に再試行します。")
                                 
-                                # 失敗通知機能 (notify_on_sleep_failure) が有効、かつ初回リトライ時のみ通知を送信
-                                if config.get("notify_on_sleep_failure", True) and not is_retrying:
-                                    send_notifications(
-                                        config,
-                                        f"⚠️ **[{pc_name}]** 保存確認ダイアログや他の常駐アプリ等によってスリープが拒否・失敗したため、30秒おきにリトライ処理に入ります。"
-                                    )
+                                if not is_retrying:
                                     retry_start_time = time.time()
                                     has_sent_10min_warning = False
                                     

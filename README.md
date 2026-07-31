@@ -170,7 +170,6 @@
 | | `wakeup_mouse_grace_seconds` | `20` | 秒 | スリープ復帰後、OSの内部ノイズを無視する保護猶予時間。 |
 | | `wakeup_active_threshold_seconds` | `5` | 秒 | 復帰後、連続で操作があった場合にアクティブとみなす秒数。 |
 | **ダイアログ・スリープ制御** | `force_sleep_on_dialog` | `false` | bool | 保存確認ダイアログ等でスリープ拒否された際、強制的にスリープへ移行させる設定（初期値: オフ）。 |
-| | `notify_on_sleep_failure` | `true` | bool | アプリやダイアログでスリープが拒否・失敗した際、スマホ等へ警告通知を送る設定。 |
 | **通知・リモート** | `desktop_notification` | `"weather_only"` | 文字列 | Windows画面右下トースト通知（`"weather_only"`, `"all"`, `"off"`）。 |
 | | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
 | | `telegram_bot_token` / `chat_id` | `""` / `""` | トークン | Telegram Bot トークンおよび宛先チャットID。 |
