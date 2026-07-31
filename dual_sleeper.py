@@ -2178,12 +2178,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     current_media_force_until = media_force_on_until
                     key_label = f" (キー: {matched_key})" if matched_key else ""
                     print(f"\n{get_timestamp()} [登録条件検知] 強制点灯対象{key_label}（...{current_title[-40:]}）のオープンを検知しました。{int(target_duration // 60)}分間 ({int(target_duration)}秒) の強制点灯モードに入ります。")
-            else:
-                # 対象ウィンドウが非アクティブ（閉じられた・別のウィンドウへ移動）の時はクリア
-                if media_force_on_until > 0 and (last_detected_media_title and last_detected_media_title not in current_title):
-                    print(f"\n{get_timestamp()} [状態遷移] 対象ウィンドウが閉じられたか非アクティブになったため、強制点灯モードを終了します。")
-                    media_force_on_until = 0
-                    current_media_force_until = 0.0
+            elif media_force_on_until == 0:
+                # 強制点灯モード中でない時のみ前回のタイトル記憶をクリア
                 last_detected_media_title = ""
 
             # ===== 高速消灯・サーバモードにおける直接遷移判定 =====
@@ -2226,16 +2222,6 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # ===== 【メディア強制点灯モード処理】 =====
             is_media_forced = (time.time() < media_force_on_until and media_force_on_until > 0)
             if is_media_forced:
-                # メディアウィンドウが非アクティブ化された（閉じられた、または別ウインドウへ切り替えられた）場合
-                if not (has_media or has_custom_kw) or (last_detected_media_title and last_detected_media_title not in current_title):
-                    print(f"\n{get_timestamp()} [状態遷移] メディアウィンドウのクローズまたは非アクティブ化を検知したため、強制点灯を解除して通常監視（State 0）へ移行します。")
-                    media_force_on_until = 0
-                    current_media_force_until = 0.0
-                    last_detected_media_title = ""
-                    state = 0
-                    last_wakeup_time = time.time()
-                    net_monitor.get_speed()
-                    continue
 
                 # 10分間はすべての操作チェックや省エネ状態への遷移を完全に無視する
                 last_wakeup_time = time.time() # 監視タイマーの基点を現在にし続ける
