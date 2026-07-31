@@ -1904,7 +1904,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     # メディア強制点灯用変数
     media_force_on_until = 0
     last_detected_media_title = ""
-    media_expired_titles = set() # 消化済みタイトルの再点灯防止ガード
+    last_detected_media_key = ""
+    media_expired_titles = set() # 消化済みタイトル/キーの連続再点灯防止ガード
     media_extensions = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
     # 一時的な延長時間記憶用
@@ -2130,7 +2131,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
             config = load_config()
 
-            # ===== 【新機能】アクティブウィンドウのメディアファイルおよび登録タイトル検知 =====
+            # ===== 【機能】アクティブウィンドウのメディアファイルおよび登録タイトル検知 =====
             current_title = get_active_window_title()
             has_media = any(ext in current_title for ext in media_extensions)
             
@@ -2138,6 +2139,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             keep_awake_kw = config.get("keep_awake_window_titles", [])
             has_custom_kw = False
             custom_duration = 600.0 # デフォルト10分 (600秒)
+            matched_key = ""
             
             for item in keep_awake_kw:
                 if not item:
@@ -2147,7 +2149,6 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     parts = item_str.split(":", 1)
                     kw = parts[0].strip().lower()
                     try:
-                        # 整数または小数(分)を秒に変換
                         duration = float(parts[1].strip()) * 60.0
                     except ValueError:
                         duration = 600.0
@@ -2158,17 +2159,25 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 if kw and kw in current_title:
                     has_custom_kw = True
                     custom_duration = duration
+                    matched_key = kw
                     break # 最初に一致したものの設定を適用
 
+            if has_media and not matched_key:
+                # メディア拡張子でマッチした場合
+                matched_key = "media_extension"
+
             if has_media or has_custom_kw:
-                # ユーザーが一度消化した動画/タイトルでない、かつ前回の検知ファイル/キーワードから変わった瞬間にのみタイマーを設定する
-                if current_title != last_detected_media_title and current_title not in media_expired_titles:
+                # ユーザーが一度消化した登録条件（キーワード/タイトル）に含まれておらず、かつ前回の検知から変わった瞬間にのみタイマーを設定
+                is_expired = (matched_key in media_expired_titles) or (current_title in media_expired_titles)
+                if current_title != last_detected_media_title and not is_expired:
                     last_detected_media_title = current_title
-                    # 指定された延長時間（秒）をセット（デフォルトは10分）
+                    last_detected_media_key = matched_key
+                    # 指定された延長時間（秒）をセット
                     target_duration = 600.0 if has_media else custom_duration
                     media_force_on_until = time.time() + target_duration
                     current_media_force_until = media_force_on_until
-                    print(f"\n{get_timestamp()} [メディア/登録タイトル検知] 点灯延長対象（...{current_title[-40:]}）のオープンを検知しました。{int(target_duration // 60)}分間 ({int(target_duration)}秒) の強制点灯モードに入ります。")
+                    key_label = f" (キー: {matched_key})" if matched_key else ""
+                    print(f"\n{get_timestamp()} [登録条件検知] 強制点灯対象{key_label}（...{current_title[-40:]}）のオープンを検知しました。{int(target_duration // 60)}分間 ({int(target_duration)}秒) の強制点灯モードに入ります。")
             else:
                 # 対象ウィンドウが非アクティブ（閉じられた・別のウィンドウへ移動）の時はクリア
                 if media_force_on_until > 0 and (last_detected_media_title and last_detected_media_title not in current_title):
@@ -2252,10 +2261,14 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 # ちょうど指定時間が満了した瞬間
                 if last_detected_media_title:
                     media_expired_titles.add(last_detected_media_title)
-                    print(f"\n{get_timestamp()} [ガード記録] タイトル「...{last_detected_media_title[-30:]}」の強制点灯を消化したため、操作復帰まで再点灯を防止ガードします。")
+                if last_detected_media_key:
+                    media_expired_titles.add(last_detected_media_key)
+                tag_label = last_detected_media_key if last_detected_media_key else (last_detected_media_title[-30:] if last_detected_media_title else "")
+                print(f"\n{get_timestamp()} [ガード記録] 登録条件（{tag_label}）の強制点灯を消化したため、操作復帰まで連続再反応を防止ガードします。")
                 media_force_on_until = 0 # タイマーをクリア
                 current_media_force_until = 0.0
                 last_detected_media_title = ""
+                last_detected_media_key = ""
                 state = 1 # 直接「通信監視状態 (State 1)」へ遷移！
                 low_net_start_time = time.time() # 通信量の監視を開始
                 # 無操作時間はすでに満了しているものとして偽装（ダミー時刻セット）
