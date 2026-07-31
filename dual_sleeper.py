@@ -1260,7 +1260,6 @@ def load_config():
         "wakeup_mouse_distance_px": 100,
         "wakeup_mouse_grace_seconds": 20,
         "wakeup_active_threshold_seconds": 5,
-        "force_sleep_on_dialog": False,
         "power_plan_control": {
             "enabled": False,
             "restore_on_exit": True,
@@ -1905,6 +1904,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     # メディア強制点灯用変数
     media_force_on_until = 0
     last_detected_media_title = ""
+    media_expired_titles = set() # 消化済みタイトルの再点灯防止ガード
     media_extensions = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
     # 一時的な延長時間記憶用
@@ -2161,8 +2161,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     break # 最初に一致したものの設定を適用
 
             if has_media or has_custom_kw:
-                # 前回の検知ファイル/キーワードからタイトル名が変わった（＝新しく開いた・別動画にした）瞬間にのみタイマーを設定する
-                if current_title != last_detected_media_title:
+                # ユーザーが一度消化した動画/タイトルでない、かつ前回の検知ファイル/キーワードから変わった瞬間にのみタイマーを設定する
+                if current_title != last_detected_media_title and current_title not in media_expired_titles:
                     last_detected_media_title = current_title
                     # 指定された延長時間（秒）をセット（デフォルトは10分）
                     target_duration = 600.0 if has_media else custom_duration
@@ -2250,6 +2250,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 continue
             elif media_force_on_until > 0:
                 # ちょうど指定時間が満了した瞬間
+                if last_detected_media_title:
+                    media_expired_titles.add(last_detected_media_title)
+                    print(f"\n{get_timestamp()} [ガード記録] タイトル「...{last_detected_media_title[-30:]}」の強制点灯を消化したため、操作復帰まで再点灯を防止ガードします。")
                 media_force_on_until = 0 # タイマーをクリア
                 current_media_force_until = 0.0
                 last_detected_media_title = ""
@@ -2466,6 +2469,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         if is_real_user_active:
                             print(f"\n{get_timestamp()} [状態遷移] 復帰猶予中に本物の操作を検知したため、通常監視（State 0）へ移行します。")
                             state = 0
+                            media_expired_titles.clear()
                             last_wakeup_time = time.time()
                             net_monitor.get_speed()
                             # ユーザーが明示的に操作したため、一時予約は解除する
@@ -2485,6 +2489,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     # 通常のState 1：監視中にユーザーが操作を再開したら通常状態に戻る
                     if idle_sec < limit_sec:
                         state = 0
+                        media_expired_titles.clear()
                         low_net_start_time = None
                         print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
                         extended_standby_limit = 0 # 復帰時は一時延長を解除
@@ -2531,6 +2536,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 if dx >= limit_px or dy >= limit_px:
                     print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。状態遷移（State 0）を行います。")
                     state = 0
+                    media_expired_titles.clear() # 操作復帰によりメディア消化ガードを解除
                     restore_original_power_scheme() # 操作復帰時に元の電源プランへ安全に自動復元
                     last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
                     net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
@@ -2785,8 +2791,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             # スリープに入る直前にユーザーの元の電源プランへ完全復元
                             restore_original_power_scheme()
 
-                            force_sleep = config.get("force_sleep_on_dialog", False)
-                            sleep_success = go_to_sleep(hibernate=use_hibernate, force=force_sleep)
+                            go_to_sleep(hibernate=use_hibernate)
                              
                             # ===== ここからスリープ復帰後の処理 =====
                             # 復帰した直後, ネットワークモニターをリセット
