@@ -53,6 +53,9 @@
     }
   },
 
+  "force_sleep_on_dialog": false,
+  "notify_on_sleep_failure": true,
+
   "gpu_protect_processes": [
     "python.exe",
     "python",

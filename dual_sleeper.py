@@ -1260,6 +1260,8 @@ def load_config():
         "wakeup_mouse_distance_px": 100,
         "wakeup_mouse_grace_seconds": 20,
         "wakeup_active_threshold_seconds": 5,
+        "force_sleep_on_dialog": False,
+        "notify_on_sleep_failure": True,
         "power_plan_control": {
             "enabled": False,
             "restore_on_exit": True,
@@ -2781,10 +2783,11 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             sleep_call_time = time.time()
                             sleep_start_dt = datetime.datetime.now()
                              
-                            # スリープに入る直前にユーザーの元の電源プランへ完全復元（ユーザー自身のWindowsサインイン設定を100%素直に反映）
+                            # スリープに入る直前にユーザーの元の電源プランへ完全復元
                             restore_original_power_scheme()
 
-                            go_to_sleep(hibernate=use_hibernate)
+                            force_sleep = config.get("force_sleep_on_dialog", False)
+                            sleep_success = go_to_sleep(hibernate=use_hibernate, force=force_sleep)
                              
                             # ===== ここからスリープ復帰後の処理 =====
                             # 復帰した直後, ネットワークモニターをリセット
@@ -2798,22 +2801,20 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             # 実際にどのくらいスリープしていたか（経過時間）を計算
                             sleep_duration = time.time() - sleep_call_time
                             
-                            if sleep_duration < 15.0:
-                                # 15秒未満で戻ってきた ➔ スリープ失敗、またはノイズによる即時誤復帰！
-                                print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（または即時誤復帰した）ため、30秒後に再試行します。")
+                            if (not sleep_success) or sleep_duration < 15.0:
+                                # 15秒未満で戻ってきた ➔ スリープ失敗（保存確認ダイアログ等のブロック）、または即時誤復帰！
+                                print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（またはダイアログ等でブロックされた）ため、30秒後に再試行します。")
                                 
-                                # 初回のリトライ移行時のみ、スマホへ警告通知を送信
-                                if not is_retrying:
+                                # 失敗通知機能 (notify_on_sleep_failure) が有効、かつ初回リトライ時のみ通知を送信
+                                if config.get("notify_on_sleep_failure", True) and not is_retrying:
                                     send_notifications(
                                         config,
-                                        f"⚠️ **[{pc_name}]** スリープの移行に失敗したため、成功するまで30秒おきにリトライ処理に入ります。"
+                                        f"⚠️ **[{pc_name}]** 保存確認ダイアログや他の常駐アプリ等によってスリープが拒否・失敗したため、30秒おきにリトライ処理に入ります。"
                                     )
-                                    # リトライ開始時刻をセット
                                     retry_start_time = time.time()
                                     has_sent_10min_warning = False
                                     
-                                is_retrying = True # リretryフラグをON
-                                # スリープタイマーを「残り30秒」の状態にセットする
+                                is_retrying = True # リトライフラグをON
                                 low_net_standby_start_time = time.time() - (standby_limit - 30)
                             else:
                                 # 15秒以上経って戻ってきた ➔ 本物のスリープ成功＆正常復帰！
