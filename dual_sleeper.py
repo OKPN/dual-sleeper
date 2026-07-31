@@ -1905,6 +1905,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     media_force_on_until = 0
     last_detected_media_title = ""
     last_detected_media_key = ""
+    media_title_absent_start_time = None # クローズ判定用タイマー
     media_expired_titles = set() # 消化済みタイトル/キーの連続再点灯防止ガード
     media_extensions = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
@@ -2222,9 +2223,26 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # ===== 【メディア強制点灯モード処理】 =====
             is_media_forced = (time.time() < media_force_on_until and media_force_on_until > 0)
             if is_media_forced:
+                # 対象ウィンドウが閉じられた（非アクティブ状態が連続 5 秒継続）かを判定
+                if not (has_media or has_custom_kw):
+                    if media_title_absent_start_time is None:
+                        media_title_absent_start_time = time.time()
+                    elif time.time() - media_title_absent_start_time >= 5.0: # 一時的切り替えではない本物のクローズ
+                        print(f"\n{get_timestamp()} [状態遷移] 対象ウィンドウが閉じられた（5秒間不在）ため、強制点灯モードを即座にキャンセルして通常監視（State 0）へ復帰します。")
+                        media_force_on_until = 0
+                        current_media_force_until = 0.0
+                        last_detected_media_title = ""
+                        last_detected_media_key = ""
+                        media_title_absent_start_time = None
+                        state = 0
+                        last_wakeup_time = time.time()
+                        net_monitor.get_speed()
+                        continue
+                else:
+                    media_title_absent_start_time = None # 対象タイトルが存在している間はクローズタイマーをリセット
 
-                # 10分間はすべての操作チェックや省エネ状態への遷移を完全に無視する
-                last_wakeup_time = time.time() # 監視タイマーの基点を現在にし続ける
+                # 強制点灯中は監視タイマーの基点を現在にし続ける
+                last_wakeup_time = time.time()
                 current_state_num = 0
                 current_idle_sec = 0.0
                 current_net_speed = speed
