@@ -6,6 +6,7 @@
   "idle_limit_seconds": 120,
   "network_limit_kbs": 30.0,
   "high_network_limit_kbs": 625.0,
+  "dynamic_network_margin_kbs": 20.0,
   "network_check_duration_seconds": 30,
   "check_interval_seconds": 5,
   "standby_after_monitor_off_seconds": 300,

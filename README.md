@@ -157,6 +157,7 @@
 | **時間帯設定** | `hibernate_start_hour` / `end_hour` | `0` / `0` | 時 | スリープ移行時、通常スリープの代わりに休止状態（電源OFF）にする時間帯（0/0は無効）。 |
 | | `no_sleep_start_hour` / `end_hour` | `0` / `0` | 時 | スリープ移行を完全に禁止する時間帯（0時〜0時は無効）。 |
 | **通信判定** | `network_limit_kbs` | `30.0` | KB/s | 平常時・放置状態とみなす通信速度のしきい値。 |
+| | `dynamic_network_margin_kbs` | `20.0` | KB/s | 動的ベースライン通信量に加算するマージン（余白）速度（初期値: 20.0 KB/s）。 |
 | | `high_network_limit_kbs` | `625.0` | KB/s | 配信中などの高トラフィックとみなす保護しきい値（5 Mbps相当）。 |
 | | `network_check_duration_seconds` | `30` | 秒 | 放置判定のため通信速度（中央値）を集計する時間。 |
 | **GPU・アプリ保護**| `gpu_protect_processes` | `["python.exe", ...]` | リスト | AI学習・推論など保護対象とするGPUプロセス名一覧。 |

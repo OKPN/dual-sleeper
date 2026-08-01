@@ -1188,6 +1188,8 @@ class NetworkMonitor:
     def __init__(self):
         self.last_io_by_nic = self._get_filtered_io()
         self.last_time = time.time()
+        self.speed_history = [] # 直近の通信速度サンプルの履歴
+        self.baseline_speed = 5.0 # 自動計測された平常時バックグラウンド通信量 (KB/s)
 
     def _get_filtered_io(self):
         """Tailscaleなどの特定アダプターを除外した、全体の送受信バイト数の合計を返します。"""
@@ -1196,19 +1198,17 @@ class NetworkMonitor:
             total_sent = 0
             total_recv = 0
             for nic_name, io in io_dict.items():
-                # アダプター名に "tailscale" (大文字小文字無視) が含まれる場合はスキップ
                 if "tailscale" in nic_name.lower():
                     continue
                 total_sent += io.bytes_sent
                 total_recv += io.bytes_recv
             return {"bytes_sent": total_sent, "bytes_recv": total_recv}
         except Exception as e:
-            # エラー発生時は全体の通信量でフォールバック
             io = psutil.net_io_counters()
             return {"bytes_sent": io.bytes_sent, "bytes_recv": io.bytes_recv}
 
     def get_speed(self):
-        """前回の呼び出しからの平均通信速度（KB/s）を計算して返します（Tailscale除外）。"""
+        """前回の呼び出しからの平均通信速度（KB/s）を計算し、動的ベースラインと履歴を更新します。"""
         current_io = self._get_filtered_io()
         current_time = time.time()
         elapsed = current_time - self.last_time
@@ -1223,7 +1223,30 @@ class NetworkMonitor:
         
         self.last_io_by_nic = current_io
         self.last_time = current_time
+
+        # 直近7サンプル（約35秒分）の通信速度を保持
+        self.speed_history.append(speed)
+        if len(self.speed_history) > 7:
+            self.speed_history.pop(0)
+
+        # 動的ベースラインの自動学習: 下位サンプル（最小2つ）の平均を「平常時バックグラウンド通信量」とする
+        sorted_h = sorted(self.speed_history)
+        if sorted_h:
+            low_samples = sorted_h[:max(1, len(sorted_h) // 3)]
+            self.baseline_speed = sum(low_samples) / float(len(low_samples))
+
         return speed
+
+    def get_median_speed(self):
+        """直近サンプルの中央値（Median）を算出。1〜2秒の単発パルス通信を完全消去します。"""
+        if not self.speed_history:
+            return 0.0
+        sorted_h = sorted(self.speed_history)
+        return sorted_h[len(sorted_h) // 2]
+
+    def get_dynamic_threshold(self, margin_kbs=20.0):
+        """自動測定された平常時ベースライン + マージン(初期値: 20.0 KB/s)の動的しきい値を返します。"""
+        return max(10.0, self.baseline_speed + float(margin_kbs))
 
 def disable_quick_edit():
     """Windowsコンソールの簡易編集モード(QuickEdit Mode)を無効化し、誤クリックによるフリーズを防止します。"""
@@ -1282,6 +1305,7 @@ def load_config():
         "gpu_limit_percent": 40,
         "game_gpu_threshold_percent": 30,
         "high_network_limit_kbs": 625.0,
+        "dynamic_network_margin_kbs": 20.0,
         "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60", "obs:360"],
         "server_mode": "off",
         "server_mode_standby_delay_seconds": 600,
@@ -2515,8 +2539,13 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 # ファイルダウンロード中であるかチェック
                 is_downloading = is_downloading_active(downloads_dir)
                 
-                # 通信速度がしきい値以下、または「ブラウザがファイルダウンロード中」の場合
-                if speed <= config['network_limit_kbs'] or is_downloading:
+                # 動的ベースライン (+ マージン 20.0 KB/s) と移動中央値(Median) による全自動パルス通信キャンセル
+                margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
+                dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+                median_sp = net_monitor.get_median_speed()
+                
+                # 移動中央値(Median)が動的しきい値以下、または「ブラウザがファイルダウンロード中」の場合
+                if median_sp <= dynamic_net_limit or is_downloading:
                     if low_net_start_time is None:
                         low_net_start_time = time.time()
                     
@@ -2524,7 +2553,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
                     rem_sec_off = max(0, int(net_check_duration - elapsed_low_net))
                     rem_off_str = f"{rem_sec_off // 60}分{rem_sec_off % 60}秒" if rem_sec_off >= 60 else f"{rem_sec_off}秒"
-                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s{dl_status}  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s (動的上限: {dynamic_net_limit:.1f}){dl_status}  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
                     if elapsed_low_net >= net_check_duration:
@@ -2538,9 +2567,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 else:
                     # 通信量がしきい値を超えたら計測タイマーをリセット
                     if low_net_start_time is not None:
-                        print(f"\n{get_timestamp()} [情報] 通信量上昇を検知したためタイマーをリセットします。速度: {speed:.1f} KB/s")
+                        print(f"\n{get_timestamp()} [情報] 通信量上昇（中央値 {median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s）を検知したためタイマーをリセットします。")
                     low_net_start_time = None
-                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 中央通信: {median_sp:.1f} KB/s  ", end="", flush=True)
 
             elif state == 2:
                 # 【消灯状態】
@@ -2566,11 +2595,14 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
 
                 # 2. スタンバイ判定のためのネットワーク監視、GPU監視、およびオーディオセッション監視
                 if standby_limit > 0:
-                    # 消灯中にパルス通信（通常通信しきい値 20 KB/s 超え）または WASAPI オーディオストリーム（通話等）を検知した場合
-                    # スリープ待機タイマーを即座にリセット（0秒に戻し、再び5分間の猶予を確保する）
-                    if speed > normal_net_limit or is_audio_active:
+                    margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
+                    dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+                    median_sp = net_monitor.get_median_speed()
+                    
+                    # 消灯中に持続通信（動的しきい値超え）または WASAPI オーディオストリーム（通話等）を検知した場合
+                    if median_sp > dynamic_net_limit or is_audio_active:
                         if low_net_standby_start_time is not None:
-                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 パルス通信 ({speed:.1f} KB/s)"
+                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 持続通信 ({median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s)"
                             print(f"\n{get_timestamp()} [タイマーリセット] {reason_str} を検知したためスリープタイマーをリセットしました。")
                         low_net_standby_start_time = time.time()
                         
