@@ -1254,8 +1254,9 @@ class NetworkMonitor:
         return self.baseline_speed
 
     def get_dynamic_threshold(self, margin_kbs=20.0):
-        """自動測定された平常時ベースライン + マージン(初期値: 20.0 KB/s)の動的しきい値を返します。"""
-        return max(10.0, self.baseline_speed + float(margin_kbs))
+        """自動測定された平常時ベースライン + マージン(初期値: 20.0 KB/s)の動的しきい値を返します。マージン自身が最低下限となります。"""
+        m = float(margin_kbs)
+        return max(m, self.baseline_speed + m)
 
 def disable_quick_edit():
     """Windowsコンソールの簡易編集モード(QuickEdit Mode)を無効化し、誤クリックによるフリーズを防止します。"""
@@ -1366,6 +1367,10 @@ def load_config():
             config_content = "".join(clean_lines)
             config = json.loads(config_content)
             
+            # 旧キー "network_limit_kbs" が config.json に残っている場合、マージン値として自動読み替え
+            if "network_limit_kbs" in config and "dynamic_network_margin_kbs" not in config:
+                config["dynamic_network_margin_kbs"] = config["network_limit_kbs"]
+
             # デフォルト値のキーが欠落している場合に補完
             for key, val in default_config.items():
                 if key not in config:
