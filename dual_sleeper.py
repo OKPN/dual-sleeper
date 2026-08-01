@@ -1737,7 +1737,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     config = load_config()
     print("現在の設定:")
     print(f"  ・無操作しきい値      : {config['idle_limit_seconds']} 秒")
-    print(f"  ・通常通信しきい値    : {config['network_limit_kbs']} KB/s")
+    print(f"  ・動的通信マージン    : {config.get('dynamic_network_margin_kbs', 20.0)} KB/s (平常時+マージン全自動適応)")
     print(f"  ・高通信しきい値      : {config.get('high_network_limit_kbs', 625.0)} KB/s (配信等保護用)")
     print(f"  ・通信監視時間        : {config['network_check_duration_seconds']} 秒")
     print(f"  ・監視ポーリング間隔  : {config['check_interval_seconds']} 秒")
@@ -2346,7 +2346,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # 判定状態(current_status_reason)の動的算出（Telegram/コンソール共通）
             is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
             high_net_limit = config.get("high_network_limit_kbs", 625.0)
-            normal_net_limit = config.get("network_limit_kbs", 20.0)
+            normal_net_limit = net_monitor.get_dynamic_threshold(config.get("dynamic_network_margin_kbs", 20.0))
 
             # ゲームGPU判定の閾値（GPU使用率30%以上を「ゲーム等のGPU使用放置」とみなす）
             game_gpu_threshold = config.get("game_gpu_threshold_percent", 30)
