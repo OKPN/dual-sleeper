@@ -1244,6 +1244,10 @@ class NetworkMonitor:
         sorted_h = sorted(self.speed_history)
         return sorted_h[len(sorted_h) // 2]
 
+    def get_baseline_speed(self):
+        """自動測定された現在の平常時バックグラウンド通信量（ベースライン速度）を返します。"""
+        return self.baseline_speed
+
     def get_dynamic_threshold(self, margin_kbs=20.0):
         """自動測定された平常時ベースライン + マージン(初期値: 20.0 KB/s)の動的しきい値を返します。"""
         return max(10.0, self.baseline_speed + float(margin_kbs))
@@ -2540,6 +2544,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 
                 # 動的ベースライン (+ マージン 20.0 KB/s) と移動中央値(Median) による全自動パルス通信キャンセル
                 margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
+                base_sp = net_monitor.get_baseline_speed()
                 dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
                 median_sp = net_monitor.get_median_speed()
                 
@@ -2552,7 +2557,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
                     rem_sec_off = max(0, int(net_check_duration - elapsed_low_net))
                     rem_off_str = f"{rem_sec_off // 60}分{rem_sec_off % 60}秒" if rem_sec_off >= 60 else f"{rem_sec_off}秒"
-                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s (動的上限: {dynamic_net_limit:.1f}){dl_status}  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s (上限: {dynamic_net_limit:.1f} [基線{base_sp:.1f}+余白{margin_kbs:.1f}]){dl_status}  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
                     if elapsed_low_net >= net_check_duration:
@@ -2566,9 +2571,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 else:
                     # 通信量がしきい値を超えたら計測タイマーをリセット
                     if low_net_start_time is not None:
-                        print(f"\n{get_timestamp()} [情報] 通信量上昇（中央値 {median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s）を検知したためタイマーをリセットします。")
+                        print(f"\n{get_timestamp()} [情報] 通信量上昇（中央値 {median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [基線{base_sp:.1f}+余白{margin_kbs:.1f}]）を検知したためタイマーをリセットします。")
                     low_net_start_time = None
-                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 中央通信: {median_sp:.1f} KB/s  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 中央通信: {median_sp:.1f} KB/s (上限: {dynamic_net_limit:.1f} [基線{base_sp:.1f}+余白{margin_kbs:.1f}])  ", end="", flush=True)
 
             elif state == 2:
                 # 【消灯状態】
@@ -2595,13 +2600,14 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 # 2. スタンバイ判定のためのネットワーク監視、GPU監視、およびオーディオセッション監視
                 if standby_limit > 0:
                     margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
+                    base_sp = net_monitor.get_baseline_speed()
                     dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
                     median_sp = net_monitor.get_median_speed()
                     
                     # 消灯中に持続通信（動的しきい値超え）または WASAPI オーディオストリーム（通話等）を検知した場合
                     if median_sp > dynamic_net_limit or is_audio_active:
                         if low_net_standby_start_time is not None:
-                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 持続通信 ({median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s)"
+                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 持続通信 ({median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [基線{base_sp:.1f}+余白{margin_kbs:.1f}])"
                             print(f"\n{get_timestamp()} [タイマーリセット] {reason_str} を検知したためスリープタイマーをリセットしました。")
                         low_net_standby_start_time = time.time()
                         
