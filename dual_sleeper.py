@@ -1365,6 +1365,8 @@ def load_config():
                 clean_lines.append("".join(clean_chars))
                 
             config_content = "".join(clean_lines)
+            # 末尾カンマ (Trailing Comma) や余分な改行コメントを自動除去してパースエラーを物理防止
+            config_content = re.sub(r',(\s*[}\]])', r'\1', config_content)
             config = json.loads(config_content)
             
             # 旧キー "network_limit_kbs" が config.json に残っている場合、マージン値として自動読み替え
