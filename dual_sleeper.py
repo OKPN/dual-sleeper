@@ -436,11 +436,14 @@ def go_to_sleep(hibernate=False):
             # OS側で休止状態が無効化されているなどの理由で失敗した場合(戻り値が0)、通常のスタンバイにフォールバック
             if not res:
                 print(f"{get_timestamp()} [警告] 休止状態の実行に失敗しました。通常のスタンバイ（スリープ）を実行します。")
-                ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+                res = ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            return bool(res)
         else:
-            ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            res = ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            return bool(res)
     except Exception as e:
         print(f"{get_timestamp()} [警告] 電源状態の変更に失敗しました: {e}")
+        return False
 
 def is_hibernate_time(start_hour, end_hour):
     """現在時刻が休止状態（ハイバネート）を適用する時間帯にあるか判定します。"""
@@ -2870,7 +2873,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             # スリープに入る直前にユーザーの元の電源プランへ完全復元
                             restore_original_power_scheme()
 
-                            go_to_sleep(hibernate=use_hibernate)
+                            sleep_success = go_to_sleep(hibernate=use_hibernate)
                              
                             # ===== ここからスリープ復帰後の処理 =====
                             # 復帰した直後, ネットワークモニターをリセット
