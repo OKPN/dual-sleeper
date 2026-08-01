@@ -1718,7 +1718,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 def main():
     global force_power_mode, standby_limit
     global original_power_plan_guid, original_power_plan_name, is_power_saver_applied, is_ultimate_plan_applied, is_ai_plan_applied, is_cpu_plan_applied
-    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
+    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_net_baseline_speed, current_net_dynamic_limit, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
     global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered, last_hotkey_time
 
     # 簡易編集モードを無効化
