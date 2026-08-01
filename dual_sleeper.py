@@ -1234,8 +1234,11 @@ class NetworkMonitor:
         # 動的ベースラインの自動学習: 下位サンプル（最小2つ）の平均を「平常時バックグラウンド通信量」とする
         sorted_h = sorted(self.speed_history)
         if sorted_h:
-            low_samples = sorted_h[:max(1, len(sorted_h) // 3)]
+            num_low = max(1, len(sorted_h) // 3)
+            low_samples = sorted_h[:num_low]
             self.baseline_speed = sum(low_samples) / float(len(low_samples))
+        else:
+            self.baseline_speed = speed
 
         return speed
 
@@ -2157,13 +2160,18 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # 常にネットワーク速度を更新しておく（正確な差分計測のため）
             speed = net_monitor.get_speed()
             
+            # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
+            config = load_config()
+
+            # グローバル通信ステータスの毎ループリアルタイム同期
+            margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
+            current_net_baseline_speed = net_monitor.get_baseline_speed()
+            current_net_dynamic_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+            
             # 物理的な無操作時間（キーボード・マウス）を取得
             physical_idle = get_idle_duration()
             current_time = time.time()
             physical_active_time = current_time - physical_idle
-            
-            # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
-            config = load_config()
 
             # ===== 【機能】アクティブウィンドウのメディアファイルおよび登録タイトル検知 =====
             current_title = get_active_window_title()
