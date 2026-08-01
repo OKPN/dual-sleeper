@@ -1267,7 +1267,6 @@ def load_config():
     """設定ファイルを読み込みます。存在しない場合はデフォルト値を返します。"""
     default_config = {
         "idle_limit_seconds": 300,
-        "network_limit_kbs": 20.0,
         "network_check_duration_seconds": 30,
         "check_interval_seconds": 5,
         "standby_after_monitor_off_seconds": 300,
