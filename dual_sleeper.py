@@ -188,6 +188,8 @@ current_idle_sec = 0.0
 current_net_speed = 0.0
 current_net_median_speed = 0.0
 current_net_max_speed = 0.0
+current_net_baseline_speed = 0.0
+current_net_dynamic_limit = 20.0
 current_low_net_sec = 0.0
 current_gpu_util = 0
 current_media_force_until = 0.0
@@ -1414,7 +1416,7 @@ def hotkey_worker():
 def telegram_worker(bot_token, chat_id, pc_name):
     """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
     global force_power_mode, telegram_offset
-    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
+    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_net_baseline_speed, current_net_dynamic_limit, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
     global is_sleep_pending, telegram_extend_request, is_lightning_forecast_risk, lightning_alert_active
     
     if not bot_token or not chat_id:
@@ -1615,6 +1617,9 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         else:
                             rem_time_str = f"`{rem_sec}秒`"
 
+                        margin_kbs = config_tmp.get("dynamic_network_margin_kbs", 20.0)
+                        dyn_limit_str = f"{current_net_dynamic_limit:.1f} KB/s (基線 {current_net_baseline_speed:.1f} + 余白 {margin_kbs:.1f} KB/s)"
+
                         reply_text = (
                             f"📊 **[{pc_name}] 現在のステータス**\n"
                             f"·状態: {state_str}\n"
@@ -1622,6 +1627,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             f"·電源プラン: `{power_plan_str}`\n"
                             f"·無操作時間: {current_idle_sec:.1f} 秒\n"
                             f"·通信速度: {net_str}\n"
+                            f"·動的通信上限: `{dyn_limit_str}`\n"
                             f"·{rem_label}: {rem_time_str}\n"
                             f"·GPU使用率: {current_gpu_util} %\n"
                             f"·強制点灯: `{media_str}`\n"
@@ -2547,6 +2553,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 base_sp = net_monitor.get_baseline_speed()
                 dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
                 median_sp = net_monitor.get_median_speed()
+                current_net_baseline_speed = base_sp
+                current_net_dynamic_limit = dynamic_net_limit
                 
                 # 移動中央値(Median)が動的しきい値以下、または「ブラウザがファイルダウンロード中」の場合
                 if median_sp <= dynamic_net_limit or is_downloading:
