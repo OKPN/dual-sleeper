@@ -1627,8 +1627,10 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         else:
                             rem_time_str = f"`{rem_sec}秒`"
 
-                        margin_kbs = config_tmp.get("dynamic_network_margin_kbs", 20.0)
-                        dyn_limit_str = f"{current_net_dynamic_limit:.1f} KB/s (基線 {current_net_baseline_speed:.1f} + 余白 {margin_kbs:.1f} KB/s)"
+                        margin_kbs = float(config_tmp.get("dynamic_network_margin_kbs", config_tmp.get("network_limit_kbs", 30.0)))
+                        base_sp = float(globals().get("current_net_baseline_speed", 0.0))
+                        calc_limit = max(margin_kbs, base_sp + margin_kbs)
+                        dyn_limit_str = f"{calc_limit:.1f} KB/s (基線 {base_sp:.1f} + 余白 {margin_kbs:.1f} KB/s)"
 
                         reply_text = (
                             f"📊 **[{pc_name}] 現在のステータス**\n"
