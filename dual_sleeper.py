@@ -2905,8 +2905,13 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
 
     except KeyboardInterrupt:
         print("\n監視プログラムを終了しました。")
-        # 終了時に念のためモニターをオンにする命令を送る
-        turn_off_monitor()
+        turn_on_monitor()
+    except Exception as e:
+        print(f"\n{get_timestamp()} [重大エラー] 予期せぬ例外が発生したため、メインループを保護・再開します: {e}")
+        time.sleep(3.0)
+        # 念のため元プランの復元とモニター点灯
+        restore_original_power_scheme()
+        turn_on_monitor()
 
 if __name__ == "__main__":
     main()

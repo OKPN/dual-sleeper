@@ -14,6 +14,7 @@ if not exist "config.json" (
     )
 )
 
+:start_loop
 echo Starting Dual Sleeper with embedded Python...
 echo ==================================================
 echo.
@@ -22,8 +23,12 @@ echo.
 
 if %errorlevel% neq 0 (
     echo.
-    echo [ERROR] Application exited with code %errorlevel%.
+    echo [ERROR] Application exited unexpectedly with code %errorlevel%.
+    echo Automatically restarting Dual Sleeper in 5 seconds...
+    timeout /t 5 >nul
+    goto start_loop
 )
 
 echo.
+echo Dual Sleeper has finished cleanly.
 pause
