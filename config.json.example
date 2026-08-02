@@ -1,8 +1,4 @@
 {
-  // ==============================================================================
-  // Dual Sleeper 設定ファイル (config.json.example)
-  // ==============================================================================
-
   "idle_limit_seconds": 300,
   "network_limit_kbs": 30.0,
   "dynamic_network_margin_kbs": 30.0,
@@ -14,6 +10,9 @@
   "hibernate_end_hour": 0,
   "no_sleep_start_hour": 0,
   "no_sleep_end_hour": 0,
+  "force_monitor_off_idle_seconds": 900,
+  "force_sleep_on_dialog": false,
+
   "game_server_protection": {
     "enabled": false,
     "ports": [8211, 2283]
@@ -42,7 +41,7 @@
 
   "lightning_protection": {
     "enabled": false,
-    "location": "35.6812, 139.7671",
+    "location": "35.681236, 139.767125",
     "cape_threshold": 2500,
     "check_interval_seconds": 300,
     "auto_hibernate": "state2_only",
@@ -56,8 +55,6 @@
       "standby_seconds": 1200
     }
   },
-
-  "force_sleep_on_dialog": false,
 
   "gpu_protect_processes": [
     "python.exe",
@@ -75,5 +72,17 @@
   ],
   "gpu_protect_min_vram_mb": 4000,
   "gpu_limit_percent": 40,
-  "game_gpu_threshold_percent": 30
+  "game_gpu_threshold_percent": 30,
+
+  "keep_awake_window_titles": [
+    "youtube:20",
+    "twitch",
+    "zoom:60",
+    "obs:360",
+    "discord:30"
+  ],
+
+  "server_mode": "off",
+  "server_mode_standby_delay_seconds": 600,
+  "wol_url": ""
 }

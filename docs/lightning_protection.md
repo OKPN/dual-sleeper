@@ -8,14 +8,14 @@ Dual Sleeper は、PC設置場所の周辺で落雷や豪雨、あるいはCAPE�
 
 1. [Google マップ](https://maps.google.com) を開きます。
 2. 自宅やPC設置場所の指定箇所を **右クリック** します。
-3. メニューの一番上に表示される **「緯度, 経度」**（例: `35.681234, 139.767123`）をクリックしてコピーします。
+3. メニューの一番上に表示される **「緯度, 経度」**（例: `35.681236, 139.767125`）をクリックしてコピーします。
 4. `config.json` を開き、`"lightning_protection"` 内の `"location"` に貼り付けます。
 5. `"enabled": true` に変更して保存します。
 
 ```json
 "lightning_protection": {
   "enabled": true,
-  "location": "35.681234, 139.767123",
+  "location": "35.681236, 139.767125",
   "check_interval_seconds": 300,
   "auto_hibernate": "state2_only",
   "forecast_protection": {
