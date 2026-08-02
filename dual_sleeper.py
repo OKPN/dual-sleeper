@@ -1189,6 +1189,51 @@ def get_gpu_status(protect_processes, min_vram_mb=500):
         
     return gpu_util, protect_active
 
+def check_game_server_port(port):
+    """指定されたポートに外部からのアクティブなゲーム接続が存在するか判定します。"""
+    if not port:
+        return False, 0
+    try:
+        port_num = int(port)
+    except (ValueError, TypeError):
+        return False, 0
+
+    # 1. psutil によるソケット検査
+    try:
+        conns = psutil.net_connections(kind='all')
+        active_count = 0
+        for c in conns:
+            if c.laddr and c.laddr.port == port_num:
+                if c.raddr and hasattr(c.raddr, 'ip'):
+                    r_ip = c.raddr.ip
+                    if r_ip and r_ip not in ("127.0.0.1", "::1", "0.0.0.0"):
+                        active_count += 1
+        if active_count > 0:
+            return True, active_count
+    except Exception:
+        pass
+
+    # 2. netstat フォールバック検査（管理者権限等が必要な環境用）
+    try:
+        cmd = f"netstat -an | findstr :{port_num}"
+        output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
+        lines = output.strip().splitlines()
+        active_count = 0
+        for line in lines:
+            parts = line.split()
+            if len(parts) >= 3:
+                local_addr = parts[1]
+                foreign_addr = parts[2]
+                if f":{port_num}" in local_addr:
+                    if not foreign_addr.startswith("127.0.0.1") and not foreign_addr.startswith("0.0.0.0") and not foreign_addr.startswith("[::]") and "*:*" not in foreign_addr:
+                        active_count += 1
+        if active_count > 0:
+            return True, active_count
+    except Exception:
+        pass
+
+    return False, 0
+
 class NetworkMonitor:
     def __init__(self):
         self.last_io_by_nic = self._get_filtered_io()
@@ -1322,6 +1367,10 @@ def load_config():
         "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60", "obs:360"],
         "server_mode": "off",
         "server_mode_standby_delay_seconds": 600,
+        "game_server_protection": {
+            "enabled": False,
+            "port": 8211
+        },
         "wol_url": "",
         "lightning_protection": {
             "enabled": False,
@@ -1636,6 +1685,18 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         calc_limit = max(margin_kbs, base_sp + margin_kbs)
                         dyn_limit_str = f"{calc_limit:.1f} KB/s (ベース {base_sp:.1f} + マージン {margin_kbs:.1f} KB/s)"
 
+                        gs_cfg = config_tmp.get("game_server_protection", {})
+                        gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
+                        gs_port = gs_cfg.get("port", 8211) if isinstance(gs_cfg, dict) else 8211
+                        if gs_enabled:
+                            has_player, p_count = check_game_server_port(gs_port)
+                            if has_player:
+                                game_srv_str = f"🎮 接続あり ({p_count}名 / ポート{gs_port})"
+                            else:
+                                game_srv_str = f"💤 接続なし (ポート{gs_port})"
+                        else:
+                            game_srv_str = "オフ"
+
                         reply_text = (
                             f"📊 **[{pc_name}] 現在のステータス**\n"
                             f"·状態: {state_str}\n"
@@ -1646,6 +1707,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             f"·動的通信上限: `{dyn_limit_str}`\n"
                             f"·{rem_label}: {rem_time_str}\n"
                             f"·GPU使用率: {current_gpu_util} %\n"
+                            f"·ゲームサーバ保護: `{game_srv_str}`\n"
                             f"·強制点灯: `{media_str}`\n"
                             f"·電源予約: `{mode_str}`\n"
                             f"·サーバモード: `{server_str}`"
@@ -1873,6 +1935,12 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     else:
         mode_desc = "無効"
     print(f"  ・高速消灯サーバモード: {mode_desc}")
+    
+    gs_cfg = config.get("game_server_protection", {})
+    gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
+    gs_port = gs_cfg.get("port", 8211) if isinstance(gs_cfg, dict) else 8211
+    gs_desc = f"有効 (対象ポート: {gs_port} | 接続中はスリープ絶対無効)" if gs_enabled else "無効 (初期無効)"
+    print(f"  ・ゲームサーバ保護    : {gs_desc}")
     
     # 点灯延長対象タイトルの出力
     keep_awake_kw = config.get("keep_awake_window_titles", [])
@@ -2628,8 +2696,13 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     extended_standby_limit = 0 # 復帰時は一時延長を解除
                     continue
 
-                # 2. スタンバイ判定のためのネットワーク監視、GPU監視、およびオーディオセッション監視
+                # 2. スタンバイ判定のためのネットワーク監視、GPU監視、ゲームサーバー保護およびオーディオセッション監視
                 if standby_limit > 0:
+                    gs_cfg = config.get("game_server_protection", {})
+                    gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
+                    gs_port = gs_cfg.get("port", 8211) if isinstance(gs_cfg, dict) else 8211
+                    has_game_player, p_count = check_game_server_port(gs_port) if gs_enabled else (False, 0)
+
                     margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
                     base_sp = net_monitor.get_baseline_speed()
                     dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
@@ -2638,9 +2711,16 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     # 生速度 (speed) または 移動中央値 (median_sp) が動的上限を超えているか判定
                     is_net_busy = (speed > dynamic_net_limit or median_sp > dynamic_net_limit)
                     
-                    # 消灯中に持続通信（3秒以上連続）または WASAPI オーディオストリーム（通話等）を検知した場合
-                    if is_net_busy or is_audio_active:
-                        if is_audio_active:
+                    # 消灯中に「ゲームサーバープレイヤー接続」「持続通信（3秒以上）」または「WASAPI オーディオストリーム（通話等）」を検知した場合
+                    if (gs_enabled and has_game_player) or is_net_busy or is_audio_active:
+                        if gs_enabled and has_game_player:
+                            # ゲームサーバーへのプレイヤー接続中：スリープ絶対無効化・タイマー即時リセット
+                            if low_net_standby_start_time is not None:
+                                print(f"\n{get_timestamp()} [タイマーリセット] 🎮 ゲームサーバー接続中 (ポート {gs_port} / プレイヤー {p_count}名) を検知したためスリープを絶対無効化・タイマーリセットしました。")
+                            low_net_standby_start_time = time.time()
+                            restore_original_power_scheme()
+                            high_net_continue_start_time = None
+                        elif is_audio_active:
                             # 通話/音声発生時は即時スリープタイマーリセット
                             if low_net_standby_start_time is not None:
                                 print(f"\n{get_timestamp()} [タイマーリセット] 🎙️ 通話/音声ストリームを検知したためスリープタイマーをリセットしました。")
@@ -2794,12 +2874,22 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                 dyn_limit = net_monitor.get_dynamic_threshold(margin_kbs)
                                 dyn_limit_str = f"{dyn_limit:.1f} KB/s (ベース {base_sp:.1f} + マージン {margin_kbs:.1f} KB/s)"
 
+                                gs_cfg_det = config.get("game_server_protection", {})
+                                gs_en_det = isinstance(gs_cfg_det, dict) and gs_cfg_det.get("enabled", False)
+                                gs_port_det = gs_cfg_det.get("port", 8211) if isinstance(gs_cfg_det, dict) else 8211
+                                if gs_en_det:
+                                    has_p_det, p_c_det = check_game_server_port(gs_port_det)
+                                    gs_det_str = f"🎮 接続あり ({p_c_det}名 / ポート{gs_port_det})" if has_p_det else f"💤 接続なし (ポート{gs_port_det})"
+                                else:
+                                    gs_det_str = "オフ"
+
                                 status_details_msg = (
                                     f"📊 **[決定時のステータス]**\n"
                                     f"·判定: `{current_status_reason}`\n"
                                     f"·電源プラン: `{plan_det_str}`\n"
                                     f"·通信速度: 中央値 {median_sp:.1f} KB/s (最高: {max_sp:.1f} KB/s)\n"
                                     f"·動的通信上限: `{dyn_limit_str}`\n"
+                                    f"·ゲームサーバ保護: `{gs_det_str}`\n"
                                     f"·GPU使用率: {gpu_util} %\n"
                                     f"·電源予約: `{force_power_mode.upper() if force_power_mode else 'なし'}`"
                                 )

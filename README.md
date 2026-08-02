@@ -165,6 +165,8 @@
 | | `gpu_limit_percent` | `40` | ％ | 保護対象プロセス実行時にスリープを阻止するGPU使用率しきい値（初期値: 40%）。 |
 | | `game_gpu_threshold_percent` | `30` | ％ | ゲーム等のGPU使用放置とみなす判定しきい値。 |
 | | `keep_awake_window_titles` | `["youtube:20", ...]`| リスト | 点灯・稼働延長を行うウィンドウタイトルと時間（分）。 |
+| **ゲームサーバ保護**| `game_server_protection.enabled` | `false` | bool | パルワールド等のゲーム専用ポート監視保護（初期無効）。 |
+| | `game_server_protection.port` | `8211` | ポート | プレイヤー接続を監視する対象ポート番号（初期値: 8211）。 |
 | **サーバモード** | `server_mode` | `"desktop"` | 文字列 | 画面即消灯サーバモード（`"off"`, `"desktop"`, `"always"`）。 |
 | | `server_mode_standby_delay_seconds` | `600` | 秒 | サーバモード時にモニター消灯後スリープするまでの遅延秒数。 |
 | **復帰誤作動防止**| `wakeup_mouse_distance_px` | `100` | px | スリープ復帰直後、マウスの微振動を無視するピクセル距離。 |

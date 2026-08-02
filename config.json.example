@@ -14,7 +14,10 @@
   "hibernate_end_hour": 0,
   "no_sleep_start_hour": 0,
   "no_sleep_end_hour": 0,
-  "force_monitor_off_idle_seconds": 900,
+  "game_server_protection": {
+    "enabled": false,
+    "port": 8211
+  },
 
   "discord_webhook_url": "",
   "telegram_bot_token": "",
