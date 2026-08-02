@@ -3,7 +3,7 @@
   // Dual Sleeper 設定ファイル (config.json.example)
   // ==============================================================================
 
-  "idle_limit_seconds": 120,
+  "idle_limit_seconds": 300,
   "network_limit_kbs": 30.0,
   "dynamic_network_margin_kbs": 30.0,
   "high_network_limit_kbs": 625.0,
