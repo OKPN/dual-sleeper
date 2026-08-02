@@ -67,16 +67,37 @@
 
 | 分類 | パラメータ名 | 初期値 | 単位 | 説明 |
 | :--- | :--- | :--- | :--- | :--- |
-| **放置判定** | `idle_limit_seconds` | `300` | 秒 | 物理的な無操作（キー・マウス）で消灯判定を開始する時間。 |
+| **放置判定** | `idle_limit_seconds` | `300` | 秒 | 物理的な無操作（キー・マウス）で消灯判定を開始する時間 (5分)。 |
 | | `network_check_duration_seconds` | `30` | 秒 | 放置判定のため通信速度を集計・監視する秒数。 |
-| | `standby_after_monitor_off_seconds` | `300` | 秒 | モニター消灯(State 2)後、システムがスリープするまでの待機時間。 |
+| | `check_interval_seconds` | `5` | 秒 | 監視ループの実行間隔。 |
+| | `standby_after_monitor_off_seconds` | `300` | 秒 | モニター消灯(State 2)後、システムがスリープするまでの待機時間 (5分)。 |
+| | `force_monitor_off_idle_seconds` | `900` | 秒 | 無操作が長期間継続した際に強制消灯する時間 (15分)。 |
+| | `force_sleep_on_dialog` | `false` | bool | 保存確認ダイアログ等でスリープ拒否された際、強制スリープするか。 |
+| | `hibernate_start_hour` / `end_hour` | `0` / `0` | 時 | スリープの代わりに自動で休止状態(S4)にする時間帯（0で無効）。 |
+| | `no_sleep_start_hour` / `end_hour` | `0` / `0` | 時 | スリープ・消灯を完全に禁止する時間帯（0で無効）。 |
 | **通信判定** | `network_limit_kbs` | `30.0` | KB/s | **消灯前(State 1)** の通信判定しきい値（未登録動画の点灯維持用）。 |
 | | `dynamic_network_margin_kbs` | `30.0` | KB/s | **消灯中(State 2)** の動的ベースライン通信量に加算するマージン速度。 |
 | | `high_network_limit_kbs` | `625.0` | KB/s | 配信中などの高トラフィックとみなす保護しきい値（5 Mbps相当）。 |
 | **ゲーム保護** | `game_server_protection.enabled` | `false` | bool | パルワールド等のゲーム専用ポート監視保護（初期無効）。 |
 | | `game_server_protection.ports` | `[8211, 2283]` | 配列/数値 | プレイヤー接続を物理監視する対象ポート番号リスト。 |
+| **通知・遠隔** | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
+| | `telegram_bot_token` / `chat_id` | `""` / `""` | 文字列 | Telegram Bot 連携トークン ＆ チャットID。 |
+| | `wol_url` | `""` | URL | Web WoL (CloudWaker) による PC 遠隔起動 URL。 |
+| | `sleep_pending_seconds` | `30` | 秒 | スリープ直前の予告通知のカウントダウン表示時間。 |
+| | `desktop_notification` | `"weather_only"` | 文字列 | Windows標準トースト通知（`"off"`, `"weather_only"`, `"all"`）。 |
+| **復帰誤作動** | `wakeup_mouse_distance_px` | `100` | px | スリープ復帰直後、マウスの微振動を無視するピクセル距離。 |
+| | `wakeup_mouse_grace_seconds` | `20` | 秒 | スリープ復帰後、OSの内部ノイズを無視する保護猶予時間。 |
+| | `wakeup_active_threshold_seconds` | `5` | 秒 | 復帰後、連続で操作があった場合にアクティブとみなす秒数。 |
 | **電源制御** | `power_plan_control.enabled` | `false` | bool | Windows電源プラン（省電力/バランス/高パフォーマンス）自動切替。 |
 | | `power_plan_control.cpu_heavy_threshold_percent` | `80` | % | CPU高負荷保護（Windows Update等）を発動する使用率しきい値。 |
+| | `power_plan_control.cpu_heavy_duration_seconds` | `5` | 秒 | CPU高負荷判定に必要な継続時間。 |
+| | `power_plan_control.power_saver_on_idle_monitor_off` | `true` | bool | 放置消灯時に自動で「省電力」プランへ切り替えるか。 |
+| | `power_plan_control.ultimate_on_game` | `true` | bool | GPUゲーム起動時に「究極のパフォーマンス」へ昇格するか。 |
+| | `power_plan_control.high_performance_on_ai` | `true` | bool | AI推論・学習検知時に「高パフォーマンス」へ昇格するか。 |
+| | `power_plan_control.high_performance_on_cpu` | `true` | bool | CPU高負荷検知時に「高パフォーマンス」へ昇格するか。 |
+| **落雷保護** | `lightning_protection.enabled` | `false` | bool | 近隣の落雷・豪雨接近時の自動休止状態退避機能。 |
+| | `lightning_protection.location` | `"35.681236, 139.767125"` | 緯度,経度 | PC設置場所の Google マップ座標（東京駅例）。 |
+| | `lightning_protection.auto_hibernate` | `"state2_only"` | 文字列 | 自動休止の動作条件（`"state2_only"`, `"always"`, `"off"`）。 |
 | **GPU保護** | `gpu_protect_processes` | `["python.exe", ...]` | リスト | AI学習・推論など保護対象とするGPUプロセス名一覧。 |
 | | `gpu_protect_min_vram_mb` | `4000` | MB | AI保護プロセスが処理中か判断する最小VRAM消費量しきい値。 |
 | | `gpu_limit_percent` | `40` | ％ | 保護対象プロセス実行時にスリープを阻止するGPU使用率しきい値。 |
@@ -84,14 +105,6 @@
 | | `keep_awake_window_titles` | `["youtube:20", ...]`| リスト | 点灯・稼働延長を行うウィンドウタイトルと時間（分）。 |
 | **サーバモード**| `server_mode` | `"off"` | 文字列 | 高速画面消灯サーバモード（`"off"`, `"desktop"`, `"always"`）。 |
 | | `server_mode_standby_delay_seconds` | `600` | 秒 | サーバモード時にモニター消灯後スリープするまでの遅延秒数。 |
-| **復帰誤作動** | `wakeup_mouse_distance_px` | `100` | px | スリープ復帰直後、マウスの微振動を無視するピクセル距離。 |
-| | `wakeup_mouse_grace_seconds` | `20` | 秒 | スリープ復帰後、OSの内部ノイズを無視する保護猶予時間。 |
-| | `wakeup_active_threshold_seconds` | `5` | 秒 | 復帰後、連続で操作があった場合にアクティブとみなす秒数。 |
-| **落雷保護** | `lightning_protection.enabled` | `false` | bool | 近隣の落雷・豪雨接近時の自動休止状態退避機能。 |
-| | `lightning_protection.location` | `"35.6812, 139.7671"` | 緯度,経度 | PC設置場所の Google マップ座標。 |
-| **通知・遠隔** | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
-| | `telegram_bot_token` / `chat_id` | `""` / `""` | 文字列 | Telegram Bot 連携トークン ＆ チャットID。 |
-| | `wol_url` | `""` | URL | Web WoL (CloudWaker) による PC 遠隔起動 URL。 |
 
 ---
 
