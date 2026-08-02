@@ -1316,8 +1316,9 @@ def load_config():
         "gpu_protect_min_vram_mb": 4000,
         "gpu_limit_percent": 40,
         "game_gpu_threshold_percent": 30,
+        "network_limit_kbs": 30.0,
         "high_network_limit_kbs": 625.0,
-        "dynamic_network_margin_kbs": 20.0,
+        "dynamic_network_margin_kbs": 30.0,
         "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60", "obs:360"],
         "server_mode": "off",
         "server_mode_standby_delay_seconds": 600,
@@ -2568,16 +2569,18 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 # ファイルダウンロード中であるかチェック
                 is_downloading = is_downloading_active(downloads_dir)
                 
-                # 動的ベースライン (+ マージン 20.0 KB/s) と移動中央値(Median) による全自動パルス通信キャンセル
-                margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
+                # ===== 【State 1 通信判定: 2段構え設計】 =====
+                # 消灯前(State 1)は未登録動画の視聴を暗くさせないため、固定しきい値(network_limit_kbs) ＋ 移動中央値(Median) で通信を捕捉
+                state1_net_limit = float(config.get("network_limit_kbs", 30.0))
+                margin_kbs = float(config.get("dynamic_network_margin_kbs", 30.0))
                 base_sp = net_monitor.get_baseline_speed()
                 dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
                 median_sp = net_monitor.get_median_speed()
                 current_net_baseline_speed = base_sp
                 current_net_dynamic_limit = dynamic_net_limit
                 
-                # 移動中央値(Median)が動的しきい値以下、または「ブラウザがファイルダウンロード中」の場合
-                if median_sp <= dynamic_net_limit or is_downloading:
+                # 移動中央値(Median)が固定しきい値以下、または「ブラウザがファイルダウンロード中」の場合
+                if median_sp <= state1_net_limit or is_downloading:
                     if low_net_start_time is None:
                         low_net_start_time = time.time()
                     
@@ -2585,7 +2588,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
                     rem_sec_off = max(0, int(net_check_duration - elapsed_low_net))
                     rem_off_str = f"{rem_sec_off // 60}分{rem_sec_off % 60}秒" if rem_sec_off >= 60 else f"{rem_sec_off}秒"
-                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s (上限: {dynamic_net_limit:.1f} [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]){dl_status}  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s (判定上限: {state1_net_limit:.1f} KB/s){dl_status}  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
                     if elapsed_low_net >= net_check_duration:
@@ -2597,11 +2600,11 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         last_mouse_x, last_mouse_y = get_mouse_position()
                         low_net_standby_start_time = None # スタンバイ監視用タイマーを初期化
                 else:
-                    # 通信量がしきい値を超えたら計測タイマーをリセット
+                    # 通信量がしきい値を超えたら計測タイマーをリセット（動画バッファ通信等による点灯維持）
                     if low_net_start_time is not None:
-                        print(f"\n{get_timestamp()} [情報] 通信量上昇（中央値 {median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]）を検知したためタイマーをリセットします。")
+                        print(f"\n{get_timestamp()} [情報] 通信量上昇（中央値 {median_sp:.1f} > 上限 {state1_net_limit:.1f} KB/s）を検知したため消灯タイマーをリセットし点灯維持します。")
                     low_net_start_time = None
-                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 中央通信: {median_sp:.1f} KB/s (上限: {dynamic_net_limit:.1f} [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}])  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 動画/通信検知中... | 中央通信: {median_sp:.1f} KB/s (判定上限: {state1_net_limit:.1f} KB/s)  ", end="", flush=True)
 
             elif state == 2:
                 # 【消灯状態】
