@@ -87,8 +87,9 @@
 | | `wakeup_active_threshold_seconds` | `5` | 秒 | 復帰後、連続で操作があった場合にアクティブとみなす秒数。 |
 | **落雷保護** | `lightning_protection.enabled` | `false` | bool | 近隣の落雷・豪雨接近時の自動休止状態退避機能。 |
 | | `lightning_protection.location` | `"35.6812, 139.7671"` | 緯度,経度 | PC設置場所の Google マップ座標。 |
-| **通知・遠隔** | `telegram_bot_token` / `chat_id` | `""` / `""` | 文字列 | Telegram Bot 連携トークン ＆ チャットID。 |
-| | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
+| **通知・遠隔** | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
+| | `telegram_bot_token` / `chat_id` | `""` / `""` | 文字列 | Telegram Bot 連携トークン ＆ チャットID。 |
+| | `wol_url` | `""` | URL | Web WoL (CloudWaker) による PC 遠隔起動 URL。 |
 
 ---
 

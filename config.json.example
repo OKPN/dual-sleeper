@@ -21,6 +21,7 @@
   "discord_webhook_url": "",
   "telegram_bot_token": "",
   "telegram_chat_id": "",
+  "wol_url": "",
   "sleep_pending_seconds": 30,
   "wakeup_mouse_distance_px": 100,
   "wakeup_mouse_grace_seconds": 20,
@@ -83,6 +84,5 @@
   ],
 
   "server_mode": "off",
-  "server_mode_standby_delay_seconds": 600,
-  "wol_url": ""
+  "server_mode_standby_delay_seconds": 600
 }
