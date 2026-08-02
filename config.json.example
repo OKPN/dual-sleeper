@@ -1,10 +1,7 @@
 {
-  // ==============================================================================
-  // Dual Sleeper 設定ファイル (config.json.example)
-  // ==============================================================================
-
-  "idle_limit_seconds": 120,
+  "idle_limit_seconds": 300,
   "network_limit_kbs": 30.0,
+  "dynamic_network_margin_kbs": 30.0,
   "high_network_limit_kbs": 625.0,
   "network_check_duration_seconds": 30,
   "check_interval_seconds": 5,
@@ -14,10 +11,17 @@
   "no_sleep_start_hour": 0,
   "no_sleep_end_hour": 0,
   "force_monitor_off_idle_seconds": 900,
+  "force_sleep_on_dialog": false,
+
+  "game_server_protection": {
+    "enabled": false,
+    "ports": [8211, 2283]
+  },
 
   "discord_webhook_url": "",
   "telegram_bot_token": "",
   "telegram_chat_id": "",
+  "wol_url": "",
   "sleep_pending_seconds": 30,
   "wakeup_mouse_distance_px": 100,
   "wakeup_mouse_grace_seconds": 20,
@@ -38,7 +42,7 @@
 
   "lightning_protection": {
     "enabled": false,
-    "location": "35.6812, 139.7671",
+    "location": "35.681236, 139.767125",
     "cape_threshold": 2500,
     "check_interval_seconds": 300,
     "auto_hibernate": "state2_only",
@@ -67,7 +71,18 @@
     "wsl.exe",
     "wslhost.exe"
   ],
-  "gpu_protect_min_vram_mb": 500,
+  "gpu_protect_min_vram_mb": 4000,
   "gpu_limit_percent": 40,
-  "game_gpu_threshold_percent": 30
+  "game_gpu_threshold_percent": 30,
+
+  "keep_awake_window_titles": [
+    "youtube:20",
+    "twitch",
+    "zoom:60",
+    "obs:360",
+    "discord:30"
+  ],
+
+  "server_mode": "off",
+  "server_mode_standby_delay_seconds": 600
 }

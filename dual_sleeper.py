@@ -188,6 +188,8 @@ current_idle_sec = 0.0
 current_net_speed = 0.0
 current_net_median_speed = 0.0
 current_net_max_speed = 0.0
+current_net_baseline_speed = 0.0
+current_net_dynamic_limit = 20.0
 current_low_net_sec = 0.0
 current_gpu_util = 0
 current_media_force_until = 0.0
@@ -434,11 +436,14 @@ def go_to_sleep(hibernate=False):
             # OS側で休止状態が無効化されているなどの理由で失敗した場合(戻り値が0)、通常のスタンバイにフォールバック
             if not res:
                 print(f"{get_timestamp()} [警告] 休止状態の実行に失敗しました。通常のスタンバイ（スリープ）を実行します。")
-                ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+                res = ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            return bool(res)
         else:
-            ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            res = ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            return bool(res)
     except Exception as e:
         print(f"{get_timestamp()} [警告] 電源状態の変更に失敗しました: {e}")
+        return False
 
 def is_hibernate_time(start_hour, end_hour):
     """現在時刻が休止状態（ハイバネート）を適用する時間帯にあるか判定します。"""
@@ -1184,10 +1189,83 @@ def get_gpu_status(protect_processes, min_vram_mb=500):
         
     return gpu_util, protect_active
 
+def check_game_server_port(ports_input):
+    """指定された1つまたは複数のポートに外部からのアクティブな接続が存在するか判定します（Tailscale/LAN完全対応）。"""
+    if ports_input is None:
+        return False, 0, ""
+
+    # 数値、文字列、またはリストをリスト構造に統一
+    if isinstance(ports_input, (int, str)):
+        raw_list = [ports_input]
+    elif isinstance(ports_input, list):
+        raw_list = ports_input
+    else:
+        return False, 0, ""
+
+    target_ports = set()
+    for p in raw_list:
+        try:
+            target_ports.add(int(p))
+        except (ValueError, TypeError):
+            pass
+
+    if not target_ports:
+        return False, 0, ""
+
+    ports_str = ", ".join(str(p) for p in sorted(target_ports))
+    active_count = 0
+
+    # 1. psutil によるソケット検査 (TCP/UDP)
+    try:
+        conns = psutil.net_connections(kind='all')
+        for c in conns:
+            if c.laddr and c.laddr.port in target_ports:
+                r_ip = None
+                if c.raddr and hasattr(c.raddr, 'ip'):
+                    r_ip = str(c.raddr.ip)
+                elif c.raddr and isinstance(c.raddr, tuple) and len(c.raddr) >= 1:
+                    r_ip = str(c.raddr[0])
+
+                if r_ip and r_ip not in ("127.0.0.1", "::1", "0.0.0.0", "::"):
+                    active_count += 1
+        if active_count > 0:
+            return True, active_count, ports_str
+    except Exception:
+        pass
+
+    # 2. netstat -ano の頑丈なCP932/Shift-JISエンコーディング解析 (Tailscale 100.x.x.x 及び LAN IP対応)
+    try:
+        output = subprocess.check_output("netstat -ano", shell=True, text=True, encoding='cp932', errors='ignore')
+        for line in output.splitlines():
+            parts = line.split()
+            if len(parts) >= 3:
+                local_addr = parts[1]
+                foreign_addr = parts[2]
+                for p_num in target_ports:
+                    # ローカルポート判定 (:2283 や :8211 など)
+                    if local_addr.endswith(f":{p_num}") or f":{p_num} " in f"{local_addr} ":
+                        # 外部アドレスの除外判定 (127.0.0.1, 0.0.0.0, [::], *:*, 0.0.0.0:0 を除外 ➔ Tailscale 100.x 及び LAN IPを全捕捉)
+                        if foreign_addr and not (
+                            foreign_addr.startswith("127.0.0.1") or
+                            foreign_addr.startswith("0.0.0.0") or
+                            foreign_addr.startswith("[::]") or
+                            foreign_addr.startswith("*:*") or
+                            foreign_addr == "0.0.0.0:0"
+                        ):
+                            active_count += 1
+        if active_count > 0:
+            return True, active_count, ports_str
+    except Exception:
+        pass
+
+    return False, 0, ports_str
+
 class NetworkMonitor:
     def __init__(self):
         self.last_io_by_nic = self._get_filtered_io()
         self.last_time = time.time()
+        self.speed_history = [] # 直近の通信速度サンプルの履歴
+        self.baseline_speed = 5.0 # 自動計測された平常時バックグラウンド通信量 (KB/s)
 
     def _get_filtered_io(self):
         """Tailscaleなどの特定アダプターを除外した、全体の送受信バイト数の合計を返します。"""
@@ -1196,19 +1274,17 @@ class NetworkMonitor:
             total_sent = 0
             total_recv = 0
             for nic_name, io in io_dict.items():
-                # アダプター名に "tailscale" (大文字小文字無視) が含まれる場合はスキップ
                 if "tailscale" in nic_name.lower():
                     continue
                 total_sent += io.bytes_sent
                 total_recv += io.bytes_recv
             return {"bytes_sent": total_sent, "bytes_recv": total_recv}
         except Exception as e:
-            # エラー発生時は全体の通信量でフォールバック
             io = psutil.net_io_counters()
             return {"bytes_sent": io.bytes_sent, "bytes_recv": io.bytes_recv}
 
     def get_speed(self):
-        """前回の呼び出しからの平均通信速度（KB/s）を計算して返します（Tailscale除外）。"""
+        """前回の呼び出しからの平均通信速度（KB/s）を計算し、動的ベースラインと履歴を更新します。"""
         current_io = self._get_filtered_io()
         current_time = time.time()
         elapsed = current_time - self.last_time
@@ -1223,7 +1299,38 @@ class NetworkMonitor:
         
         self.last_io_by_nic = current_io
         self.last_time = current_time
+
+        # 直近7サンプル（約35秒分）の通信速度を保持
+        self.speed_history.append(speed)
+        if len(self.speed_history) > 7:
+            self.speed_history.pop(0)
+
+        # 動的ベースラインの自動学習: 下位サンプル（最小2つ）の平均を「平常時バックグラウンド通信量」とする
+        sorted_h = sorted(self.speed_history)
+        if sorted_h:
+            num_low = max(1, len(sorted_h) // 3)
+            low_samples = sorted_h[:num_low]
+            self.baseline_speed = sum(low_samples) / float(len(low_samples))
+        else:
+            self.baseline_speed = speed
+
         return speed
+
+    def get_median_speed(self):
+        """直近サンプルの中央値（Median）を算出。1〜2秒の単発パルス通信を完全消去します。"""
+        if not self.speed_history:
+            return 0.0
+        sorted_h = sorted(self.speed_history)
+        return sorted_h[len(sorted_h) // 2]
+
+    def get_baseline_speed(self):
+        """自動測定された現在の平常時バックグラウンド通信量（ベースライン速度）を返します。"""
+        return self.baseline_speed
+
+    def get_dynamic_threshold(self, margin_kbs=20.0):
+        """自動測定された平常時ベースライン + マージン(初期値: 20.0 KB/s)の動的しきい値を返します。マージン自身が最低下限となります。"""
+        m = float(margin_kbs)
+        return max(m, self.baseline_speed + m)
 
 def disable_quick_edit():
     """Windowsコンソールの簡易編集モード(QuickEdit Mode)を無効化し、誤クリックによるフリーズを防止します。"""
@@ -1244,7 +1351,6 @@ def load_config():
     """設定ファイルを読み込みます。存在しない場合はデフォルト値を返します。"""
     default_config = {
         "idle_limit_seconds": 300,
-        "network_limit_kbs": 20.0,
         "network_check_duration_seconds": 30,
         "check_interval_seconds": 5,
         "standby_after_monitor_off_seconds": 300,
@@ -1278,13 +1384,19 @@ def load_config():
             "lmstudio.exe", "lm-studio.exe", "lms.exe",
             "vmmemwsl", "wsl.exe", "wslhost.exe"
         ],
-        "gpu_protect_min_vram_mb": 500,
+        "gpu_protect_min_vram_mb": 4000,
         "gpu_limit_percent": 40,
         "game_gpu_threshold_percent": 30,
+        "network_limit_kbs": 30.0,
         "high_network_limit_kbs": 625.0,
+        "dynamic_network_margin_kbs": 30.0,
         "keep_awake_window_titles": ["youtube:20", "twitch", "zoom:60", "obs:360"],
         "server_mode": "off",
         "server_mode_standby_delay_seconds": 600,
+        "game_server_protection": {
+            "enabled": False,
+            "port": 8211
+        },
         "wol_url": "",
         "lightning_protection": {
             "enabled": False,
@@ -1332,8 +1444,14 @@ def load_config():
                 clean_lines.append("".join(clean_chars))
                 
             config_content = "".join(clean_lines)
+            # 末尾カンマ (Trailing Comma) や余分な改行コメントを自動除去してパースエラーを物理防止
+            config_content = re.sub(r',(\s*[}\]])', r'\1', config_content)
             config = json.loads(config_content)
             
+            # 旧キー "network_limit_kbs" が config.json に残っている場合、マージン値として自動読み替え
+            if "network_limit_kbs" in config and "dynamic_network_margin_kbs" not in config:
+                config["dynamic_network_margin_kbs"] = config["network_limit_kbs"]
+
             # デフォルト値のキーが欠落している場合に補完
             for key, val in default_config.items():
                 if key not in config:
@@ -1387,7 +1505,7 @@ def hotkey_worker():
 def telegram_worker(bot_token, chat_id, pc_name):
     """Telegramのロングポーリング受信を専門に行う非同期ワーカースレッドです。"""
     global force_power_mode, telegram_offset
-    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
+    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_net_baseline_speed, current_net_dynamic_limit, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
     global is_sleep_pending, telegram_extend_request, is_lightning_forecast_risk, lightning_alert_active
     
     if not bot_token or not chat_id:
@@ -1588,6 +1706,23 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         else:
                             rem_time_str = f"`{rem_sec}秒`"
 
+                        margin_kbs = float(config_tmp.get("dynamic_network_margin_kbs", config_tmp.get("network_limit_kbs", 30.0)))
+                        base_sp = float(globals().get("current_net_baseline_speed", 0.0))
+                        calc_limit = max(margin_kbs, base_sp + margin_kbs)
+                        dyn_limit_str = f"{calc_limit:.1f} KB/s (ベース {base_sp:.1f} + マージン {margin_kbs:.1f} KB/s)"
+
+                        gs_cfg = config_tmp.get("game_server_protection", {})
+                        gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
+                        gs_port_input = gs_cfg.get("ports", gs_cfg.get("port", 8211)) if isinstance(gs_cfg, dict) else 8211
+                        if gs_enabled:
+                            has_player, p_count, p_str = check_game_server_port(gs_port_input)
+                            if has_player:
+                                game_srv_str = f"🎮 接続あり ({p_count}名 / ポート: {p_str})"
+                            else:
+                                game_srv_str = f"💤 接続なし (ポート: {p_str})"
+                        else:
+                            game_srv_str = "オフ"
+
                         reply_text = (
                             f"📊 **[{pc_name}] 現在のステータス**\n"
                             f"·状態: {state_str}\n"
@@ -1595,8 +1730,10 @@ def telegram_worker(bot_token, chat_id, pc_name):
                             f"·電源プラン: `{power_plan_str}`\n"
                             f"·無操作時間: {current_idle_sec:.1f} 秒\n"
                             f"·通信速度: {net_str}\n"
+                            f"·動的通信上限: `{dyn_limit_str}`\n"
                             f"·{rem_label}: {rem_time_str}\n"
                             f"·GPU使用率: {current_gpu_util} %\n"
+                            f"·ゲームサーバ保護: `{game_srv_str}`\n"
                             f"·強制点灯: `{media_str}`\n"
                             f"·電源予約: `{mode_str}`\n"
                             f"·サーバモード: `{server_str}`"
@@ -1673,7 +1810,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
 def main():
     global force_power_mode, standby_limit
     global original_power_plan_guid, original_power_plan_name, is_power_saver_applied, is_ultimate_plan_applied, is_ai_plan_applied, is_cpu_plan_applied
-    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
+    global current_state_num, current_idle_sec, current_net_speed, current_net_median_speed, current_net_max_speed, current_net_baseline_speed, current_net_dynamic_limit, current_low_net_sec, current_gpu_util, current_media_force_until, current_status_reason
     global is_sleep_pending, telegram_extend_request, hotkey_state2_triggered, last_hotkey_time
 
     # 簡易編集モードを無効化
@@ -1714,7 +1851,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     config = load_config()
     print("現在の設定:")
     print(f"  ・無操作しきい値      : {config['idle_limit_seconds']} 秒")
-    print(f"  ・通常通信しきい値    : {config['network_limit_kbs']} KB/s")
+    print(f"  ・動的通信マージン    : {config.get('dynamic_network_margin_kbs', 20.0)} KB/s (平常時+マージン全自動適応)")
     print(f"  ・高通信しきい値      : {config.get('high_network_limit_kbs', 625.0)} KB/s (配信等保護用)")
     print(f"  ・通信監視時間        : {config['network_check_duration_seconds']} 秒")
     print(f"  ・監視ポーリング間隔  : {config['check_interval_seconds']} 秒")
@@ -1825,6 +1962,13 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
         mode_desc = "無効"
     print(f"  ・高速消灯サーバモード: {mode_desc}")
     
+    gs_cfg = config.get("game_server_protection", {})
+    gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
+    gs_port_input = gs_cfg.get("ports", gs_cfg.get("port", 8211)) if isinstance(gs_cfg, dict) else 8211
+    _, _, gs_ports_str = check_game_server_port(gs_port_input)
+    gs_desc = f"有効 (対象ポート: {gs_ports_str} | 接続中はスリープ絶対無効)" if gs_enabled else "無効 (初期無効)"
+    print(f"  ・ゲームサーバ保護    : {gs_desc}")
+    
     # 点灯延長対象タイトルの出力
     keep_awake_kw = config.get("keep_awake_window_titles", [])
     if keep_awake_kw:
@@ -1882,6 +2026,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     monitor_off_input_time = None
     last_wakeup_time = time.time()
     last_controller_input_time = 0.0
+    last_game_server_active_time = 0.0
     
     standby_limit = config.get("standby_after_monitor_off_seconds", 300)
     
@@ -1904,6 +2049,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     # メディア強制点灯用変数
     media_force_on_until = 0
     last_detected_media_title = ""
+    last_detected_media_key = ""
+    media_title_absent_start_time = None # クローズ判定用タイマー
+    media_expired_titles = set() # 消化済みタイトル/キーの連続再点灯防止ガード
     media_extensions = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 
     # 一時的な延長時間記憶用
@@ -2121,15 +2269,20 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # 常にネットワーク速度を更新しておく（正確な差分計測のため）
             speed = net_monitor.get_speed()
             
+            # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
+            config = load_config()
+
+            # グローバル通信ステータスの毎ループリアルタイム同期
+            margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
+            current_net_baseline_speed = net_monitor.get_baseline_speed()
+            current_net_dynamic_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+            
             # 物理的な無操作時間（キーボード・マウス）を取得
             physical_idle = get_idle_duration()
             current_time = time.time()
             physical_active_time = current_time - physical_idle
-            
-            # 設定を毎ループ再読み込み（稼働中に設定変更できるようにする）
-            config = load_config()
 
-            # ===== 【新機能】アクティブウィンドウのメディアファイルおよび登録タイトル検知 =====
+            # ===== 【機能】アクティブウィンドウのメディアファイルおよび登録タイトル検知 =====
             current_title = get_active_window_title()
             has_media = any(ext in current_title for ext in media_extensions)
             
@@ -2137,6 +2290,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             keep_awake_kw = config.get("keep_awake_window_titles", [])
             has_custom_kw = False
             custom_duration = 600.0 # デフォルト10分 (600秒)
+            matched_key = ""
             
             for item in keep_awake_kw:
                 if not item:
@@ -2146,7 +2300,6 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     parts = item_str.split(":", 1)
                     kw = parts[0].strip().lower()
                     try:
-                        # 整数または小数(分)を秒に変換
                         duration = float(parts[1].strip()) * 60.0
                     except ValueError:
                         duration = 600.0
@@ -2157,23 +2310,27 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 if kw and kw in current_title:
                     has_custom_kw = True
                     custom_duration = duration
+                    matched_key = kw
                     break # 最初に一致したものの設定を適用
 
+            if has_media and not matched_key:
+                # メディア拡張子でマッチした場合
+                matched_key = "media_extension"
+
             if has_media or has_custom_kw:
-                # 前回の検知ファイル/キーワードからタイトル名が変わった（＝新しく開いた・別動画にした）瞬間にのみタイマーを設定する
-                if current_title != last_detected_media_title:
+                # ユーザーが一度消化した登録条件（キーワード/タイトル）に含まれておらず、かつ前回の検知から変わった瞬間にのみタイマーを設定
+                is_expired = (matched_key in media_expired_titles) or (current_title in media_expired_titles)
+                if current_title != last_detected_media_title and not is_expired:
                     last_detected_media_title = current_title
-                    # 指定された延長時間（秒）をセット（デフォルトは10分）
+                    last_detected_media_key = matched_key
+                    # 指定された延長時間（秒）をセット
                     target_duration = 600.0 if has_media else custom_duration
                     media_force_on_until = time.time() + target_duration
                     current_media_force_until = media_force_on_until
-                    print(f"\n{get_timestamp()} [メディア/登録タイトル検知] 点灯延長対象（...{current_title[-40:]}）のオープンを検知しました。{int(target_duration // 60)}分間 ({int(target_duration)}秒) の強制点灯モードに入ります。")
-            else:
-                # 対象ウィンドウが非アクティブ（閉じられた・別のウィンドウへ移動）の時はクリア
-                if media_force_on_until > 0 and (last_detected_media_title and last_detected_media_title not in current_title):
-                    print(f"\n{get_timestamp()} [状態遷移] 対象ウィンドウが閉じられたか非アクティブになったため、強制点灯モードを終了します。")
-                    media_force_on_until = 0
-                    current_media_force_until = 0.0
+                    key_label = f" (キー: {matched_key})" if matched_key else ""
+                    print(f"\n{get_timestamp()} [登録条件検知] 強制点灯対象{key_label}（...{current_title[-40:]}）のオープンを検知しました。{int(target_duration // 60)}分間 ({int(target_duration)}秒) の強制点灯モードに入ります。")
+            elif media_force_on_until == 0:
+                # 強制点灯モード中でない時のみ前回のタイトル記憶をクリア
                 last_detected_media_title = ""
 
             # ===== 高速消灯・サーバモードにおける直接遷移判定 =====
@@ -2216,19 +2373,26 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # ===== 【メディア強制点灯モード処理】 =====
             is_media_forced = (time.time() < media_force_on_until and media_force_on_until > 0)
             if is_media_forced:
-                # メディアウィンドウが非アクティブ化された（閉じられた、または別ウインドウへ切り替えられた）場合
-                if not (has_media or has_custom_kw) or (last_detected_media_title and last_detected_media_title not in current_title):
-                    print(f"\n{get_timestamp()} [状態遷移] メディアウィンドウのクローズまたは非アクティブ化を検知したため、強制点灯を解除して通常監視（State 0）へ移行します。")
-                    media_force_on_until = 0
-                    current_media_force_until = 0.0
-                    last_detected_media_title = ""
-                    state = 0
-                    last_wakeup_time = time.time()
-                    net_monitor.get_speed()
-                    continue
+                # 対象ウィンドウが閉じられた（非アクティブ状態が連続 5 秒継続）かを判定
+                if not (has_media or has_custom_kw):
+                    if media_title_absent_start_time is None:
+                        media_title_absent_start_time = time.time()
+                    elif time.time() - media_title_absent_start_time >= 5.0: # 一時的切り替えではない本物のクローズ
+                        print(f"\n{get_timestamp()} [状態遷移] 対象ウィンドウが閉じられた（5秒間不在）ため、強制点灯モードを即座にキャンセルして通常監視（State 0）へ復帰します。")
+                        media_force_on_until = 0
+                        current_media_force_until = 0.0
+                        last_detected_media_title = ""
+                        last_detected_media_key = ""
+                        media_title_absent_start_time = None
+                        state = 0
+                        last_wakeup_time = time.time()
+                        net_monitor.get_speed()
+                        continue
+                else:
+                    media_title_absent_start_time = None # 対象タイトルが存在している間はクローズタイマーをリセット
 
-                # 10分間はすべての操作チェックや省エネ状態への遷移を完全に無視する
-                last_wakeup_time = time.time() # 監視タイマーの基点を現在にし続ける
+                # 強制点灯中は監視タイマーの基点を現在にし続ける
+                last_wakeup_time = time.time()
                 current_state_num = 0
                 current_idle_sec = 0.0
                 current_net_speed = speed
@@ -2249,9 +2413,16 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 continue
             elif media_force_on_until > 0:
                 # ちょうど指定時間が満了した瞬間
+                if last_detected_media_title:
+                    media_expired_titles.add(last_detected_media_title)
+                if last_detected_media_key:
+                    media_expired_titles.add(last_detected_media_key)
+                tag_label = last_detected_media_key if last_detected_media_key else (last_detected_media_title[-30:] if last_detected_media_title else "")
+                print(f"\n{get_timestamp()} [ガード記録] 登録条件（{tag_label}）の強制点灯を消化したため、操作復帰まで連続再反応を防止ガードします。")
                 media_force_on_until = 0 # タイマーをクリア
                 current_media_force_until = 0.0
                 last_detected_media_title = ""
+                last_detected_media_key = ""
                 state = 1 # 直接「通信監視状態 (State 1)」へ遷移！
                 low_net_start_time = time.time() # 通信量の監視を開始
                 # 無操作時間はすでに満了しているものとして偽装（ダミー時刻セット）
@@ -2302,7 +2473,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # 判定状態(current_status_reason)の動的算出（Telegram/コンソール共通）
             is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
             high_net_limit = config.get("high_network_limit_kbs", 625.0)
-            normal_net_limit = config.get("network_limit_kbs", 20.0)
+            normal_net_limit = net_monitor.get_dynamic_threshold(config.get("dynamic_network_margin_kbs", 20.0))
 
             # ゲームGPU判定の閾値（GPU使用率30%以上を「ゲーム等のGPU使用放置」とみなす）
             game_gpu_threshold = config.get("game_gpu_threshold_percent", 30)
@@ -2465,6 +2636,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         if is_real_user_active:
                             print(f"\n{get_timestamp()} [状態遷移] 復帰猶予中に本物の操作を検知したため、通常監視（State 0）へ移行します。")
                             state = 0
+                            media_expired_titles.clear()
                             last_wakeup_time = time.time()
                             net_monitor.get_speed()
                             # ユーザーが明示的に操作したため、一時予約は解除する
@@ -2484,6 +2656,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     # 通常のState 1：監視中にユーザーが操作を再開したら通常状態に戻る
                     if idle_sec < limit_sec:
                         state = 0
+                        media_expired_titles.clear()
                         low_net_start_time = None
                         print(f"\n{get_timestamp()} [状態遷移] 操作を検知したため、通常監視に戻ります。")
                         extended_standby_limit = 0 # 復帰時は一時延長を解除
@@ -2492,8 +2665,18 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 # ファイルダウンロード中であるかチェック
                 is_downloading = is_downloading_active(downloads_dir)
                 
-                # 通信速度がしきい値以下、または「ブラウザがファイルダウンロード中」の場合
-                if speed <= config['network_limit_kbs'] or is_downloading:
+                # ===== 【State 1 通信判定: 2段構え設計】 =====
+                # 消灯前(State 1)は未登録動画の視聴を暗くさせないため、固定しきい値(network_limit_kbs) ＋ 移動中央値(Median) で通信を捕捉
+                state1_net_limit = float(config.get("network_limit_kbs", 30.0))
+                margin_kbs = float(config.get("dynamic_network_margin_kbs", 30.0))
+                base_sp = net_monitor.get_baseline_speed()
+                dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+                median_sp = net_monitor.get_median_speed()
+                current_net_baseline_speed = base_sp
+                current_net_dynamic_limit = dynamic_net_limit
+                
+                # 移動中央値(Median)が固定しきい値以下、または「ブラウザがファイルダウンロード中」の場合
+                if median_sp <= state1_net_limit or is_downloading:
                     if low_net_start_time is None:
                         low_net_start_time = time.time()
                     
@@ -2501,7 +2684,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
                     rem_sec_off = max(0, int(net_check_duration - elapsed_low_net))
                     rem_off_str = f"{rem_sec_off // 60}分{rem_sec_off % 60}秒" if rem_sec_off >= 60 else f"{rem_sec_off}秒"
-                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s{dl_status}  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s (判定上限: {state1_net_limit:.1f} KB/s){dl_status}  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
                     if elapsed_low_net >= net_check_duration:
@@ -2513,11 +2696,11 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         last_mouse_x, last_mouse_y = get_mouse_position()
                         low_net_standby_start_time = None # スタンバイ監視用タイマーを初期化
                 else:
-                    # 通信量がしきい値を超えたら計測タイマーをリセット
+                    # 通信量がしきい値を超えたら計測タイマーをリセット（動画バッファ通信等による点灯維持）
                     if low_net_start_time is not None:
-                        print(f"\n{get_timestamp()} [情報] 通信量上昇を検知したためタイマーをリセットします。速度: {speed:.1f} KB/s")
+                        print(f"\n{get_timestamp()} [情報] 通信量上昇（中央値 {median_sp:.1f} > 上限 {state1_net_limit:.1f} KB/s）を検知したため消灯タイマーをリセットし点灯維持します。")
                     low_net_start_time = None
-                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 通信速度: {speed:.1f} KB/s  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 動画/通信検知中... | 中央通信: {median_sp:.1f} KB/s (判定上限: {state1_net_limit:.1f} KB/s)  ", end="", flush=True)
 
             elif state == 2:
                 # 【消灯状態】
@@ -2530,6 +2713,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 if dx >= limit_px or dy >= limit_px:
                     print(f"\n{get_timestamp()} [復帰] マウスの移動を検知しました。状態遷移（State 0）を行います。")
                     state = 0
+                    media_expired_titles.clear() # 操作復帰によりメディア消化ガードを解除
                     restore_original_power_scheme() # 操作復帰時に元の電源プランへ安全に自動復元
                     last_wakeup_time = time.time() # 復帰した瞬間を基準時として記録
                     net_monitor.get_speed() # 復帰待ちの間の通信量をリセット
@@ -2540,25 +2724,51 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     extended_standby_limit = 0 # 復帰時は一時延長を解除
                     continue
 
-                # 2. スタンバイ判定のためのネットワーク監視、GPU監視、およびオーディオセッション監視
+                # 2. スタンバイ判定のためのネットワーク監視、GPU監視、ゲームサーバー保護およびオーディオセッション監視
                 if standby_limit > 0:
-                    # 消灯中にパルス通信（通常通信しきい値 20 KB/s 超え）または WASAPI オーディオストリーム（通話等）を検知した場合
-                    # スリープ待機タイマーを即座にリセット（0秒に戻し、再び5分間の猶予を確保する）
-                    if speed > normal_net_limit or is_audio_active:
-                        if low_net_standby_start_time is not None:
-                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 パルス通信 ({speed:.1f} KB/s)"
-                            print(f"\n{get_timestamp()} [タイマーリセット] {reason_str} を検知したためスリープタイマーをリセットしました。")
-                        low_net_standby_start_time = time.time()
-                        
-                        # 【ヒステリシス保護: 復元判定】
-                        # 通話発生時は即時復元。単発パルス通信は3秒以上継続した場合のみ復元してパタパタ切替を防止
-                        if is_audio_active:
-                            high_net_continue_start_time = None
+                    gs_cfg = config.get("game_server_protection", {})
+                    gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
+                    gs_port_input = gs_cfg.get("ports", gs_cfg.get("port", 8211)) if isinstance(gs_cfg, dict) else 8211
+                    has_game_player, p_count, p_ports_str = check_game_server_port(gs_port_input) if gs_enabled else (False, 0, "")
+
+                    if gs_enabled and has_game_player:
+                        last_game_server_active_time = time.time()
+
+                    is_gs_latched = gs_enabled and (has_game_player or (time.time() - last_game_server_active_time < 60.0))
+
+                    margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
+                    base_sp = net_monitor.get_baseline_speed()
+                    dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+                    median_sp = net_monitor.get_median_speed()
+                    
+                    # 生速度 (speed) または 移動中央値 (median_sp) が動的上限を超えているか判定
+                    is_net_busy = (speed > dynamic_net_limit or median_sp > dynamic_net_limit)
+                    
+                    # 消灯中に「ゲームサーバープレイヤー接続」「持続通信（3秒以上）」または「WASAPI オーディオストリーム（通話等）」を検知した場合
+                    if is_gs_latched or is_net_busy or is_audio_active:
+                        if is_gs_latched:
+                            # ゲームサーバーへのプレイヤー接続中：スリープ絶対無効化・タイマー即時リセット
+                            if low_net_standby_start_time is not None:
+                                p_disp_count = max(1, p_count)
+                                print(f"\n{get_timestamp()} [タイマーリセット] 🎮 ゲームサーバー接続中 (ポート: {p_ports_str} / 接続数 {p_disp_count}) を検知したためスリープを絶対無効化・タイマーリセットしました。")
+                            low_net_standby_start_time = time.time()
                             restore_original_power_scheme()
+                            high_net_continue_start_time = None
+                        elif is_audio_active:
+                            # 通話/音声発生時は即時スリープタイマーリセット
+                            if low_net_standby_start_time is not None:
+                                print(f"\n{get_timestamp()} [タイマーリセット] 🎙️ 通話/音声ストリームを検知したためスリープタイマーをリセットしました。")
+                            low_net_standby_start_time = time.time()
+                            restore_original_power_scheme()
+                            high_net_continue_start_time = None
                         else:
+                            # 3秒持続確認タイマー（0.1秒の一瞬のノイズは無視し、3秒間連続通信でしっかり捕捉）
                             if high_net_continue_start_time is None:
                                 high_net_continue_start_time = time.time()
                             elif time.time() - high_net_continue_start_time >= 3.0:
+                                if low_net_standby_start_time is not None:
+                                    print(f"\n{get_timestamp()} [タイマーリセット] 🔄 持続通信 ({speed:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]) を3秒間継続検知したためスリープタイマーをリセットしました。")
+                                low_net_standby_start_time = time.time()
                                 restore_original_power_scheme()
                     else:
                         high_net_continue_start_time = None
@@ -2693,11 +2903,27 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                         pass
 
                                 # スリープ決定時点のState 2詳細ステータス文字列を作成
+                                margin_kbs = float(config.get("dynamic_network_margin_kbs", config.get("network_limit_kbs", 30.0)))
+                                base_sp = net_monitor.get_baseline_speed()
+                                dyn_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+                                dyn_limit_str = f"{dyn_limit:.1f} KB/s (ベース {base_sp:.1f} + マージン {margin_kbs:.1f} KB/s)"
+
+                                gs_cfg_det = config.get("game_server_protection", {})
+                                gs_en_det = isinstance(gs_cfg_det, dict) and gs_cfg_det.get("enabled", False)
+                                gs_port_det_in = gs_cfg_det.get("ports", gs_cfg_det.get("port", 8211)) if isinstance(gs_cfg_det, dict) else 8211
+                                if gs_en_det:
+                                    has_p_det, p_c_det, p_s_det = check_game_server_port(gs_port_det_in)
+                                    gs_det_str = f"🎮 接続あり ({p_c_det}名 / ポート: {p_s_det})" if has_p_det else f"💤 接続なし (ポート: {p_s_det})"
+                                else:
+                                    gs_det_str = "オフ"
+
                                 status_details_msg = (
                                     f"📊 **[決定時のステータス]**\n"
                                     f"·判定: `{current_status_reason}`\n"
                                     f"·電源プラン: `{plan_det_str}`\n"
                                     f"·通信速度: 中央値 {median_sp:.1f} KB/s (最高: {max_sp:.1f} KB/s)\n"
+                                    f"·動的通信上限: `{dyn_limit_str}`\n"
+                                    f"·ゲームサーバ保護: `{gs_det_str}`\n"
                                     f"·GPU使用率: {gpu_util} %\n"
                                     f"·電源予約: `{force_power_mode.upper() if force_power_mode else 'なし'}`"
                                 )
@@ -2781,10 +3007,10 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             sleep_call_time = time.time()
                             sleep_start_dt = datetime.datetime.now()
                              
-                            # スリープに入る直前にユーザーの元の電源プランへ完全復元（ユーザー自身のWindowsサインイン設定を100%素直に反映）
+                            # スリープに入る直前にユーザーの元の電源プランへ完全復元
                             restore_original_power_scheme()
 
-                            go_to_sleep(hibernate=use_hibernate)
+                            sleep_success = go_to_sleep(hibernate=use_hibernate)
                              
                             # ===== ここからスリープ復帰後の処理 =====
                             # 復帰した直後, ネットワークモニターをリセット
@@ -2798,22 +3024,15 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             # 実際にどのくらいスリープしていたか（経過時間）を計算
                             sleep_duration = time.time() - sleep_call_time
                             
-                            if sleep_duration < 15.0:
-                                # 15秒未満で戻ってきた ➔ スリープ失敗、またはノイズによる即時誤復帰！
-                                print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（または即時誤復帰した）ため、30秒後に再試行します。")
+                            if (not sleep_success) or sleep_duration < 15.0:
+                                # 15秒未満で戻ってきた ➔ スリープ失敗（保存確認ダイアログ等のブロック）、または即時誤復帰！
+                                print(f"\n{get_timestamp()} [警告] スリープの移行に失敗した（またはダイアログ等でブロックされた）ため、30秒後に再試行します。")
                                 
-                                # 初回のリトライ移行時のみ、スマホへ警告通知を送信
                                 if not is_retrying:
-                                    send_notifications(
-                                        config,
-                                        f"⚠️ **[{pc_name}]** スリープの移行に失敗したため、成功するまで30秒おきにリトライ処理に入ります。"
-                                    )
-                                    # リトライ開始時刻をセット
                                     retry_start_time = time.time()
                                     has_sent_10min_warning = False
                                     
-                                is_retrying = True # リretryフラグをON
-                                # スリープタイマーを「残り30秒」の状態にセットする
+                                is_retrying = True # リトライフラグをON
                                 low_net_standby_start_time = time.time() - (standby_limit - 30)
                             else:
                                 # 15秒以上経って戻ってきた ➔ 本物のスリープ成功＆正常復帰！
@@ -2888,8 +3107,13 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
 
     except KeyboardInterrupt:
         print("\n監視プログラムを終了しました。")
-        # 終了時に念のためモニターをオンにする命令を送る
-        turn_off_monitor()
+        turn_on_monitor()
+    except Exception as e:
+        print(f"\n{get_timestamp()} [重大エラー] 予期せぬ例外が発生したため、メインループを保護・再開します: {e}")
+        time.sleep(3.0)
+        # 念のため元プランの復元とモニター点灯
+        restore_original_power_scheme()
+        turn_on_monitor()
 
 if __name__ == "__main__":
     main()
