@@ -103,6 +103,27 @@ Telegram Bot から以下のコマンドを送信して、スマホから遠隔�
 
 ---
 
+## ❓ よくある質問と回答 (Q&A)
+
+### Q. 無操作時の消灯までの時間を長くする（または短くする）には？
+**A.** `config.json` の **`"idle_limit_seconds"`**（単位: 秒）の数値を変更します。  
+例えば、無操作から画面消灯までの時間を 10 分間にしたい場合は `"idle_limit_seconds": 600` に設定します。
+
+### Q. 消灯後のスリープまでの時間を長くする（または短くする）には？
+**A.** `config.json` の **`"standby_after_monitor_off_seconds"`**（単位: 秒）の数値を変更します。  
+例えば、画面が消灯してからスリープするまでの待機時間を 10 分間にしたい場合は `"standby_after_monitor_off_seconds": 600` に設定します。
+
+### Q. 特定のアプリを使用時に点灯させ続けるには？
+**A.** `config.json` の **`"keep_awake_window_titles"`** リストに、該当アプリの使用時にウィンドウタイトル欄へ必ず表示されるキーワードを登録します。  
+*(※ オプションで `:分数` を付けると指定時間延長できます)*  
+例: `"keep_awake_window_titles": ["youtube:20", "obs:360", "電卓"]`
+
+### Q. 特定の GPU 利用アプリを利用中に PC をスリープさせないようにするには？
+**A.** `config.json` の **`"gpu_protect_processes"`** リストに、対象アプリの exe 名（実行ファイル名）を追加登録します。  
+例: `"gpu_protect_processes": ["python.exe", "sd-webui.exe", "lmstudio.exe"]`
+
+---
+
 ## バージョン履歴 (Changelog)
 
 ### v1.4.0 (2026-08-02)
