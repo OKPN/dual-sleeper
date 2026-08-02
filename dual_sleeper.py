@@ -1189,50 +1189,66 @@ def get_gpu_status(protect_processes, min_vram_mb=500):
         
     return gpu_util, protect_active
 
-def check_game_server_port(port):
-    """指定されたポートに外部からのアクティブなゲーム接続が存在するか判定します。"""
-    if not port:
-        return False, 0
-    try:
-        port_num = int(port)
-    except (ValueError, TypeError):
-        return False, 0
+def check_game_server_port(ports_input):
+    """指定された1つまたは複数のポートに外部からのアクティブな接続が存在するか判定します。"""
+    if ports_input is None:
+        return False, 0, ""
+
+    # 数値、文字列、またはリストをリスト構造に統一
+    if isinstance(ports_input, (int, str)):
+        raw_list = [ports_input]
+    elif isinstance(ports_input, list):
+        raw_list = ports_input
+    else:
+        return False, 0, ""
+
+    target_ports = set()
+    for p in raw_list:
+        try:
+            target_ports.add(int(p))
+        except (ValueError, TypeError):
+            pass
+
+    if not target_ports:
+        return False, 0, ""
+
+    ports_str = ", ".join(str(p) for p in sorted(target_ports))
 
     # 1. psutil によるソケット検査
     try:
         conns = psutil.net_connections(kind='all')
         active_count = 0
         for c in conns:
-            if c.laddr and c.laddr.port == port_num:
+            if c.laddr and c.laddr.port in target_ports:
                 if c.raddr and hasattr(c.raddr, 'ip'):
                     r_ip = c.raddr.ip
                     if r_ip and r_ip not in ("127.0.0.1", "::1", "0.0.0.0"):
                         active_count += 1
         if active_count > 0:
-            return True, active_count
+            return True, active_count, ports_str
     except Exception:
         pass
 
-    # 2. netstat フォールバック検査（管理者権限等が必要な環境用）
+    # 2. netstat フォールバック検査
     try:
-        cmd = f"netstat -an | findstr :{port_num}"
-        output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
-        lines = output.strip().splitlines()
         active_count = 0
+        output = subprocess.check_output("netstat -an", shell=True, text=True, stderr=subprocess.DEVNULL)
+        lines = output.strip().splitlines()
         for line in lines:
             parts = line.split()
             if len(parts) >= 3:
                 local_addr = parts[1]
                 foreign_addr = parts[2]
-                if f":{port_num}" in local_addr:
-                    if not foreign_addr.startswith("127.0.0.1") and not foreign_addr.startswith("0.0.0.0") and not foreign_addr.startswith("[::]") and "*:*" not in foreign_addr:
-                        active_count += 1
+                for p_num in target_ports:
+                    if f":{p_num}" in local_addr:
+                        if not foreign_addr.startswith("127.0.0.1") and not foreign_addr.startswith("0.0.0.0") and not foreign_addr.startswith("[::]") and "*:*" not in foreign_addr:
+                            active_count += 1
         if active_count > 0:
-            return True, active_count
+            return True, active_count, ports_str
     except Exception:
         pass
 
-    return False, 0
+    return False, 0, ports_str
 
 class NetworkMonitor:
     def __init__(self):
@@ -1687,13 +1703,13 @@ def telegram_worker(bot_token, chat_id, pc_name):
 
                         gs_cfg = config_tmp.get("game_server_protection", {})
                         gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
-                        gs_port = gs_cfg.get("port", 8211) if isinstance(gs_cfg, dict) else 8211
+                        gs_port_input = gs_cfg.get("ports", gs_cfg.get("port", 8211)) if isinstance(gs_cfg, dict) else 8211
                         if gs_enabled:
-                            has_player, p_count = check_game_server_port(gs_port)
+                            has_player, p_count, p_str = check_game_server_port(gs_port_input)
                             if has_player:
-                                game_srv_str = f"🎮 接続あり ({p_count}名 / ポート{gs_port})"
+                                game_srv_str = f"🎮 接続あり ({p_count}名 / ポート: {p_str})"
                             else:
-                                game_srv_str = f"💤 接続なし (ポート{gs_port})"
+                                game_srv_str = f"💤 接続なし (ポート: {p_str})"
                         else:
                             game_srv_str = "オフ"
 
@@ -1938,8 +1954,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     
     gs_cfg = config.get("game_server_protection", {})
     gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
-    gs_port = gs_cfg.get("port", 8211) if isinstance(gs_cfg, dict) else 8211
-    gs_desc = f"有効 (対象ポート: {gs_port} | 接続中はスリープ絶対無効)" if gs_enabled else "無効 (初期無効)"
+    gs_port_input = gs_cfg.get("ports", gs_cfg.get("port", 8211)) if isinstance(gs_cfg, dict) else 8211
+    _, _, gs_ports_str = check_game_server_port(gs_port_input)
+    gs_desc = f"有効 (対象ポート: {gs_ports_str} | 接続中はスリープ絶対無効)" if gs_enabled else "無効 (初期無効)"
     print(f"  ・ゲームサーバ保護    : {gs_desc}")
     
     # 点灯延長対象タイトルの出力
@@ -2700,8 +2717,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 if standby_limit > 0:
                     gs_cfg = config.get("game_server_protection", {})
                     gs_enabled = isinstance(gs_cfg, dict) and gs_cfg.get("enabled", False)
-                    gs_port = gs_cfg.get("port", 8211) if isinstance(gs_cfg, dict) else 8211
-                    has_game_player, p_count = check_game_server_port(gs_port) if gs_enabled else (False, 0)
+                    gs_port_input = gs_cfg.get("ports", gs_cfg.get("port", 8211)) if isinstance(gs_cfg, dict) else 8211
+                    has_game_player, p_count, p_ports_str = check_game_server_port(gs_port_input) if gs_enabled else (False, 0, "")
 
                     margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
                     base_sp = net_monitor.get_baseline_speed()
@@ -2716,7 +2733,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         if gs_enabled and has_game_player:
                             # ゲームサーバーへのプレイヤー接続中：スリープ絶対無効化・タイマー即時リセット
                             if low_net_standby_start_time is not None:
-                                print(f"\n{get_timestamp()} [タイマーリセット] 🎮 ゲームサーバー接続中 (ポート {gs_port} / プレイヤー {p_count}名) を検知したためスリープを絶対無効化・タイマーリセットしました。")
+                                print(f"\n{get_timestamp()} [タイマーリセット] 🎮 ゲームサーバー接続中 (ポート: {p_ports_str} / プレイヤー {p_count}名) を検知したためスリープを絶対無効化・タイマーリセットしました。")
                             low_net_standby_start_time = time.time()
                             restore_original_power_scheme()
                             high_net_continue_start_time = None
@@ -2876,10 +2893,10 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
 
                                 gs_cfg_det = config.get("game_server_protection", {})
                                 gs_en_det = isinstance(gs_cfg_det, dict) and gs_cfg_det.get("enabled", False)
-                                gs_port_det = gs_cfg_det.get("port", 8211) if isinstance(gs_cfg_det, dict) else 8211
+                                gs_port_det_in = gs_cfg_det.get("ports", gs_cfg_det.get("port", 8211)) if isinstance(gs_cfg_det, dict) else 8211
                                 if gs_en_det:
-                                    has_p_det, p_c_det = check_game_server_port(gs_port_det)
-                                    gs_det_str = f"🎮 接続あり ({p_c_det}名 / ポート{gs_port_det})" if has_p_det else f"💤 接続なし (ポート{gs_port_det})"
+                                    has_p_det, p_c_det, p_s_det = check_game_server_port(gs_port_det_in)
+                                    gs_det_str = f"🎮 接続あり ({p_c_det}名 / ポート: {p_s_det})" if has_p_det else f"💤 接続なし (ポート: {p_s_det})"
                                 else:
                                     gs_det_str = "オフ"
 

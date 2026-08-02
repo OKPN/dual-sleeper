@@ -16,7 +16,7 @@
   "no_sleep_end_hour": 0,
   "game_server_protection": {
     "enabled": false,
-    "port": 8211
+    "ports": [8211, 2283]
   },
 
   "discord_webhook_url": "",
