@@ -2635,22 +2635,26 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
                     median_sp = net_monitor.get_median_speed()
                     
-                    # 消灯中に持続通信（動的しきい値超え）または WASAPI オーディオストリーム（通話等）を検知した場合
-                    if median_sp > dynamic_net_limit or is_audio_active:
-                        if low_net_standby_start_time is not None:
-                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 持続通信 ({median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}])"
-                            print(f"\n{get_timestamp()} [タイマーリセット] {reason_str} を検知したためスリープタイマーをリセットしました。")
-                        low_net_standby_start_time = time.time()
-                        
-                        # 【ヒステリシス保護: 復元判定】
-                        # 通話発生時は即時復元。単発パルス通信は3秒以上継続した場合のみ復元してパタパタ切替を防止
+                    # 生速度 (speed) または 移動中央値 (median_sp) が動的上限を超えているか判定
+                    is_net_busy = (speed > dynamic_net_limit or median_sp > dynamic_net_limit)
+                    
+                    # 消灯中に持続通信（3秒以上連続）または WASAPI オーディオストリーム（通話等）を検知した場合
+                    if is_net_busy or is_audio_active:
                         if is_audio_active:
-                            high_net_continue_start_time = None
+                            # 通話/音声発生時は即時スリープタイマーリセット
+                            if low_net_standby_start_time is not None:
+                                print(f"\n{get_timestamp()} [タイマーリセット] 🎙️ 通話/音声ストリームを検知したためスリープタイマーをリセットしました。")
+                            low_net_standby_start_time = time.time()
                             restore_original_power_scheme()
+                            high_net_continue_start_time = None
                         else:
+                            # 3秒持続確認タイマー（0.1秒の一瞬のノイズは無視し、3秒間連続通信でしっかり捕捉）
                             if high_net_continue_start_time is None:
                                 high_net_continue_start_time = time.time()
                             elif time.time() - high_net_continue_start_time >= 3.0:
+                                if low_net_standby_start_time is not None:
+                                    print(f"\n{get_timestamp()} [タイマーリセット] 🔄 持続通信 ({speed:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]) を3秒間継続検知したためスリープタイマーをリセットしました。")
+                                low_net_standby_start_time = time.time()
                                 restore_original_power_scheme()
                     else:
                         high_net_continue_start_time = None
