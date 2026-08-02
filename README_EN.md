@@ -68,18 +68,39 @@ No complex installation or account registration required. It runs quietly in the
 | | `check_interval_seconds` | `5` | sec | Main loop polling interval. |
 | | `standby_after_monitor_off_seconds` | `300` | sec | Standby delay after screen turns off (5 min). |
 | | `force_monitor_off_idle_seconds` | `900` | sec | Forced screen off timeout for long idle (15 min). |
-| **Network** | `network_limit_kbs` | `30.0` | KB/s | **State 1** fixed network limit for video stream protection. |
-| | `dynamic_network_margin_kbs` | `30.0` | KB/s | **State 2** margin added above dynamic baseline. |
-| | `high_network_limit_kbs` | `625.0` | KB/s | High-traffic threshold for streaming (5 Mbps). |
-| **Game Server**| `game_server_protection.enabled` | `false` | bool | Enable active port connection protection. |
-| | `game_server_protection.ports` | `[8211, 2283]` | array | Target port list (Palworld, Minecraft, Immich). |
-| **Notifications**| `discord_webhook_url` | `""` | URL | Discord Webhook URL. |
-| | `telegram_bot_token` / `chat_id` | `""` / `""` | string | Telegram Bot Token and Chat ID. |
+| | `force_sleep_on_dialog` | `false` | bool | Force sleep if save confirmation dialog rejects sleep. |
+| | `hibernate_start_hour` / `end_hour` | `0` / `0` | hour | Time window to auto-hibernate (S4) instead of sleep (0=disabled). |
+| | `no_sleep_start_hour` / `end_hour` | `0` / `0` | hour | Time window to completely block sleep and monitor off (0=disabled). |
+| **Network** | `network_limit_kbs` | `30.0` | KB/s | **State 1** fixed network limit for unlisted video stream protection. |
+| | `dynamic_network_margin_kbs` | `30.0` | KB/s | **State 2** margin added above dynamic baseline network speed. |
+| | `high_network_limit_kbs` | `625.0` | KB/s | High-traffic threshold for streaming (5 Mbps equivalent). |
+| **Game Server**| `game_server_protection.enabled` | `false` | bool | Enable active port connection protection (Palworld, Minecraft, etc.). |
+| | `game_server_protection.ports` | `[8211, 2283]` | array/int | Target port list to physically monitor active player connections. |
+| **Notifications**| `discord_webhook_url` | `""` | URL | Discord Webhook URL for one-way alerts. |
+| | `telegram_bot_token` / `chat_id` | `""` / `""` | string | Telegram Bot Token and Chat ID for remote control and alerts. |
 | | `wol_url` | `""` | URL | Web WoL (CloudWaker) one-tap wake-up URL. |
-| **Power Plan** | `power_plan_control.enabled` | `false` | bool | Dynamic Windows Power Scheme switching. |
-| | `power_plan_control.cpu_heavy_threshold_percent` | `80` | % | CPU load threshold for Windows Update / encoding. |
-| **Lightning** | `lightning_protection.enabled` | `false` | bool | Emergency hibernation on nearby lightning alert. |
-| | `lightning_protection.location` | `"35.681236, 139.767125"` | lat,lon | Coordinates for Open-Meteo weather scans. |
+| | `sleep_pending_seconds` | `30` | sec | Pre-sleep countdown warning display duration. |
+| | `desktop_notification` | `"weather_only"` | string | Windows native toast notifications (`"off"`, `"weather_only"`, `"all"`). |
+| **Wakeup** | `wakeup_mouse_distance_px` | `100` | px | Pixel distance threshold to ignore mouse micro-vibrations on wake. |
+| | `wakeup_mouse_grace_seconds` | `20` | sec | Grace period to ignore OS internal noise right after waking up. |
+| | `wakeup_active_threshold_seconds` | `5` | sec | Continuous user activity duration needed to mark active post-wake. |
+| **Power Plan** | `power_plan_control.enabled` | `false` | bool | Dynamic Windows Power Scheme switching (Power Saver / High Performance). |
+| | `power_plan_control.cpu_heavy_threshold_percent` | `80` | % | CPU load threshold for Windows Update / video encoding protection. |
+| | `power_plan_control.cpu_heavy_duration_seconds` | `5` | sec | Sustained CPU load duration required to trigger CPU protection. |
+| | `power_plan_control.power_saver_on_idle_monitor_off` | `true` | bool | Auto-switch to "Power Saver" plan when screen turns off in State 2. |
+| | `power_plan_control.ultimate_on_game` | `true` | bool | Elevate to "Ultimate Performance" plan during GPU gaming. |
+| | `power_plan_control.high_performance_on_ai` | `true` | bool | Elevate to "High Performance" plan during AI inference/training. |
+| | `power_plan_control.high_performance_on_cpu` | `true` | bool | Elevate to "High Performance" plan during heavy CPU load. |
+| **Lightning** | `lightning_protection.enabled` | `false` | bool | Emergency auto-hibernation during nearby lightning/storm alerts. |
+| | `lightning_protection.location` | `"35.681236, 139.767125"` | lat,lon | Google Maps coordinates for Open-Meteo weather scans (Tokyo Station). |
+| | `lightning_protection.auto_hibernate` | `"state2_only"` | string | Auto-hibernate triggers (`"state2_only"`, `"always"`, `"off"`). |
+| **GPU Protect**| `gpu_protect_processes` | `["python.exe", ...]` | list | Target GPU executable names to protect from sleep. |
+| | `gpu_protect_min_vram_mb` | `4000` | MB | Minimum VRAM consumption threshold to confirm active AI process. |
+| | `gpu_limit_percent` | `40` | % | GPU usage threshold to prevent sleep during protected processes. |
+| | `game_gpu_threshold_percent` | `30` | % | GPU usage threshold to detect 3D gaming activity. |
+| | `keep_awake_window_titles` | `["youtube:20", ...]`| list | Window title keywords and keep-awake durations (in minutes). |
+| **Server Mode**| `server_mode` | `"off"` | string | High-speed screen-off server mode (`"off"`, `"desktop"`, `"always"`). |
+| | `server_mode_standby_delay_seconds` | `600` | sec | Standby delay after screen off in server mode. |
 
 ---
 
