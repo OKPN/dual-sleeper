@@ -21,8 +21,9 @@ import signal
 import re
 
 # ==============================================================================
-# 電源プロファイル (Power Scheme) 管理用グローバル変数 ＆ ヘルパー関数
+# 電源プロファイル (Power Scheme) 管理用グローバル変数 ＆ 排他制御ロック
 # ==============================================================================
+state_lock = threading.Lock()
 original_power_plan_guid = None
 original_power_plan_name = None
 is_power_saver_applied = False
@@ -1263,7 +1264,7 @@ def check_game_server_port(ports_input):
 class NetworkMonitor:
     def __init__(self):
         self.last_io_by_nic = self._get_filtered_io()
-        self.last_time = time.time()
+        self.last_time = time.monotonic()
         self.speed_history = [] # 直近の通信速度サンプルの履歴
         self.baseline_speed = 5.0 # 自動計測された平常時バックグラウンド通信量 (KB/s)
 
@@ -1279,14 +1280,17 @@ class NetworkMonitor:
                 total_sent += io.bytes_sent
                 total_recv += io.bytes_recv
             return {"bytes_sent": total_sent, "bytes_recv": total_recv}
-        except Exception as e:
-            io = psutil.net_io_counters()
-            return {"bytes_sent": io.bytes_sent, "bytes_recv": io.bytes_recv}
+        except Exception:
+            try:
+                io = psutil.net_io_counters()
+                return {"bytes_sent": io.bytes_sent, "bytes_recv": io.bytes_recv}
+            except Exception:
+                return {"bytes_sent": 0, "bytes_recv": 0}
 
     def get_speed(self):
         """前回の呼び出しからの平均通信速度（KB/s）を計算し、動的ベースラインと履歴を更新します。"""
         current_io = self._get_filtered_io()
-        current_time = time.time()
+        current_time = time.monotonic()
         elapsed = current_time - self.last_time
         
         if elapsed <= 0:
@@ -1565,7 +1569,8 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         
                     # ===== スリープ警告中（カウントダウン30秒中）の割り込み処理 =====
                     if is_sleep_pending:
-                        telegram_extend_request = True
+                        with state_lock:
+                            telegram_extend_request = True
                         reply_text = f"🟢 **[{pc_name}]** スリープ移行を一時的に10分間延長しました。(モニター消灯状態維持)"
                         print(f"\n{get_timestamp()} [リモート設定] Telegramから割り込み入力を受信したため、スリープ移行を10分間延長します。")
                         send_telegram_notification(bot_token, chat_id, reply_text)
@@ -1588,19 +1593,20 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         }
                         
                         # 引数が直接指定されている場合は優先適用
-                        if len(text_parts) > 1:
-                            sub_cmd = text_parts[1]
-                            if sub_cmd in ("sleep", "s"):
-                                force_power_mode = "sleep"
-                            elif sub_cmd in ("hibernate", "h"):
-                                force_power_mode = "hibernate"
-                            elif sub_cmd in ("cancel", "c", "off", "none"):
-                                force_power_mode = None
+                        with state_lock:
+                            if len(text_parts) > 1:
+                                sub_cmd = text_parts[1]
+                                if sub_cmd in ("sleep", "s"):
+                                    force_power_mode = "sleep"
+                                elif sub_cmd in ("hibernate", "h"):
+                                    force_power_mode = "hibernate"
+                                elif sub_cmd in ("cancel", "c", "off", "none"):
+                                    force_power_mode = None
+                                else:
+                                    force_power_mode = "invalid"
                             else:
-                                force_power_mode = "invalid"
-                        else:
-                            # 引数なしはトグル
-                            force_power_mode = next_power_modes.get(force_power_mode, None)
+                                # 引数なしはトグル
+                                force_power_mode = next_power_modes.get(force_power_mode, None)
                             
                         if force_power_mode == "invalid":
                             reply_text = f"❌ **[{pc_name}]** 無効な予約モードです。`sleep` とだけ送信して切り替えてください。"
@@ -2024,7 +2030,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     ai_gpu_idle_start_time = None
     cpu_heavy_start_time = None
     monitor_off_input_time = None
-    last_wakeup_time = time.time()
+    last_wakeup_time = time.monotonic()
     last_controller_input_time = 0.0
     last_game_server_active_time = 0.0
     
@@ -2732,9 +2738,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     has_game_player, p_count, p_ports_str = check_game_server_port(gs_port_input) if gs_enabled else (False, 0, "")
 
                     if gs_enabled and has_game_player:
-                        last_game_server_active_time = time.time()
+                        last_game_server_active_time = time.monotonic()
 
-                    is_gs_latched = gs_enabled and (has_game_player or (time.time() - last_game_server_active_time < 60.0))
+                    is_gs_latched = gs_enabled and (has_game_player or (time.monotonic() - last_game_server_active_time < 60.0))
 
                     margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
                     base_sp = net_monitor.get_baseline_speed()
@@ -2751,24 +2757,24 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             if low_net_standby_start_time is not None:
                                 p_disp_count = max(1, p_count)
                                 print(f"\n{get_timestamp()} [タイマーリセット] 🎮 ゲームサーバー接続中 (ポート: {p_ports_str} / 接続数 {p_disp_count}) を検知したためスリープを絶対無効化・タイマーリセットしました。")
-                            low_net_standby_start_time = time.time()
+                            low_net_standby_start_time = time.monotonic()
                             restore_original_power_scheme()
                             high_net_continue_start_time = None
                         elif is_audio_active:
                             # 通話/音声発生時は即時スリープタイマーリセット
                             if low_net_standby_start_time is not None:
                                 print(f"\n{get_timestamp()} [タイマーリセット] 🎙️ 通話/音声ストリームを検知したためスリープタイマーをリセットしました。")
-                            low_net_standby_start_time = time.time()
+                            low_net_standby_start_time = time.monotonic()
                             restore_original_power_scheme()
                             high_net_continue_start_time = None
                         else:
                             # 3秒持続確認タイマー（0.1秒の一瞬のノイズは無視し、3秒間連続通信でしっかり捕捉）
                             if high_net_continue_start_time is None:
-                                high_net_continue_start_time = time.time()
-                            elif time.time() - high_net_continue_start_time >= 3.0:
+                                high_net_continue_start_time = time.monotonic()
+                            elif time.monotonic() - high_net_continue_start_time >= 3.0:
                                 if low_net_standby_start_time is not None:
                                     print(f"\n{get_timestamp()} [タイマーリセット] 🔄 持続通信 ({speed:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]) を3秒間継続検知したためスリープタイマーをリセットしました。")
-                                low_net_standby_start_time = time.time()
+                                low_net_standby_start_time = time.monotonic()
                                 restore_original_power_scheme()
                     else:
                         high_net_continue_start_time = None
