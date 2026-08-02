@@ -1190,7 +1190,7 @@ def get_gpu_status(protect_processes, min_vram_mb=500):
     return gpu_util, protect_active
 
 def check_game_server_port(ports_input):
-    """指定された1つまたは複数のポートに外部からのアクティブな接続が存在するか判定します。"""
+    """指定された1つまたは複数のポートに外部からのアクティブな接続が存在するか判定します（Tailscale/LAN完全対応）。"""
     if ports_input is None:
         return False, 0, ""
 
@@ -1213,35 +1213,45 @@ def check_game_server_port(ports_input):
         return False, 0, ""
 
     ports_str = ", ".join(str(p) for p in sorted(target_ports))
+    active_count = 0
 
-    # 1. psutil によるソケット検査
+    # 1. psutil によるソケット検査 (TCP/UDP)
     try:
         conns = psutil.net_connections(kind='all')
-        active_count = 0
         for c in conns:
             if c.laddr and c.laddr.port in target_ports:
+                r_ip = None
                 if c.raddr and hasattr(c.raddr, 'ip'):
-                    r_ip = c.raddr.ip
-                    if r_ip and r_ip not in ("127.0.0.1", "::1", "0.0.0.0"):
-                        active_count += 1
+                    r_ip = str(c.raddr.ip)
+                elif c.raddr and isinstance(c.raddr, tuple) and len(c.raddr) >= 1:
+                    r_ip = str(c.raddr[0])
+
+                if r_ip and r_ip not in ("127.0.0.1", "::1", "0.0.0.0", "::"):
+                    active_count += 1
         if active_count > 0:
             return True, active_count, ports_str
     except Exception:
         pass
 
-    # 2. netstat フォールバック検査
+    # 2. netstat -ano の頑丈なCP932/Shift-JISエンコーディング解析 (Tailscale 100.x.x.x 及び LAN IP対応)
     try:
-        active_count = 0
-        output = subprocess.check_output("netstat -an", shell=True, text=True, stderr=subprocess.DEVNULL)
-        lines = output.strip().splitlines()
-        for line in lines:
+        output = subprocess.check_output("netstat -ano", shell=True, text=True, encoding='cp932', errors='ignore')
+        for line in output.splitlines():
             parts = line.split()
             if len(parts) >= 3:
                 local_addr = parts[1]
                 foreign_addr = parts[2]
                 for p_num in target_ports:
-                    if f":{p_num}" in local_addr:
-                        if not foreign_addr.startswith("127.0.0.1") and not foreign_addr.startswith("0.0.0.0") and not foreign_addr.startswith("[::]") and "*:*" not in foreign_addr:
+                    # ローカルポート判定 (:2283 や :8211 など)
+                    if local_addr.endswith(f":{p_num}") or f":{p_num} " in f"{local_addr} ":
+                        # 外部アドレスの除外判定 (127.0.0.1, 0.0.0.0, [::], *:*, 0.0.0.0:0 を除外 ➔ Tailscale 100.x 及び LAN IPを全捕捉)
+                        if foreign_addr and not (
+                            foreign_addr.startswith("127.0.0.1") or
+                            foreign_addr.startswith("0.0.0.0") or
+                            foreign_addr.startswith("[::]") or
+                            foreign_addr.startswith("*:*") or
+                            foreign_addr == "0.0.0.0:0"
+                        ):
                             active_count += 1
         if active_count > 0:
             return True, active_count, ports_str
@@ -2016,6 +2026,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     monitor_off_input_time = None
     last_wakeup_time = time.time()
     last_controller_input_time = 0.0
+    last_game_server_active_time = 0.0
     
     standby_limit = config.get("standby_after_monitor_off_seconds", 300)
     
@@ -2720,6 +2731,11 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     gs_port_input = gs_cfg.get("ports", gs_cfg.get("port", 8211)) if isinstance(gs_cfg, dict) else 8211
                     has_game_player, p_count, p_ports_str = check_game_server_port(gs_port_input) if gs_enabled else (False, 0, "")
 
+                    if gs_enabled and has_game_player:
+                        last_game_server_active_time = time.time()
+
+                    is_gs_latched = gs_enabled and (has_game_player or (time.time() - last_game_server_active_time < 60.0))
+
                     margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
                     base_sp = net_monitor.get_baseline_speed()
                     dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
@@ -2729,11 +2745,12 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     is_net_busy = (speed > dynamic_net_limit or median_sp > dynamic_net_limit)
                     
                     # 消灯中に「ゲームサーバープレイヤー接続」「持続通信（3秒以上）」または「WASAPI オーディオストリーム（通話等）」を検知した場合
-                    if (gs_enabled and has_game_player) or is_net_busy or is_audio_active:
-                        if gs_enabled and has_game_player:
+                    if is_gs_latched or is_net_busy or is_audio_active:
+                        if is_gs_latched:
                             # ゲームサーバーへのプレイヤー接続中：スリープ絶対無効化・タイマー即時リセット
                             if low_net_standby_start_time is not None:
-                                print(f"\n{get_timestamp()} [タイマーリセット] 🎮 ゲームサーバー接続中 (ポート: {p_ports_str} / プレイヤー {p_count}名) を検知したためスリープを絶対無効化・タイマーリセットしました。")
+                                p_disp_count = max(1, p_count)
+                                print(f"\n{get_timestamp()} [タイマーリセット] 🎮 ゲームサーバー接続中 (ポート: {p_ports_str} / 接続数 {p_disp_count}) を検知したためスリープを絶対無効化・タイマーリセットしました。")
                             low_net_standby_start_time = time.time()
                             restore_original_power_scheme()
                             high_net_continue_start_time = None
