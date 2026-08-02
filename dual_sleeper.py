@@ -1633,7 +1633,7 @@ def telegram_worker(bot_token, chat_id, pc_name):
                         margin_kbs = float(config_tmp.get("dynamic_network_margin_kbs", config_tmp.get("network_limit_kbs", 30.0)))
                         base_sp = float(globals().get("current_net_baseline_speed", 0.0))
                         calc_limit = max(margin_kbs, base_sp + margin_kbs)
-                        dyn_limit_str = f"{calc_limit:.1f} KB/s (基線 {base_sp:.1f} + 余白 {margin_kbs:.1f} KB/s)"
+                        dyn_limit_str = f"{calc_limit:.1f} KB/s (ベース {base_sp:.1f} + マージン {margin_kbs:.1f} KB/s)"
 
                         reply_text = (
                             f"📊 **[{pc_name}] 現在のステータス**\n"
@@ -2585,7 +2585,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
                     rem_sec_off = max(0, int(net_check_duration - elapsed_low_net))
                     rem_off_str = f"{rem_sec_off // 60}分{rem_sec_off % 60}秒" if rem_sec_off >= 60 else f"{rem_sec_off}秒"
-                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s (上限: {dynamic_net_limit:.1f} [基線{base_sp:.1f}+余白{margin_kbs:.1f}]){dl_status}  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 🌙 消灯まで残り {rem_off_str} | 中央通信: {median_sp:.1f} KB/s (上限: {dynamic_net_limit:.1f} [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]){dl_status}  ", end="", flush=True)
                     
                     # 低通信の状態が指定時間続いたらモニター消灯
                     if elapsed_low_net >= net_check_duration:
@@ -2599,9 +2599,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 else:
                     # 通信量がしきい値を超えたら計測タイマーをリセット
                     if low_net_start_time is not None:
-                        print(f"\n{get_timestamp()} [情報] 通信量上昇（中央値 {median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [基線{base_sp:.1f}+余白{margin_kbs:.1f}]）を検知したためタイマーをリセットします。")
+                        print(f"\n{get_timestamp()} [情報] 通信量上昇（中央値 {median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]）を検知したためタイマーをリセットします。")
                     low_net_start_time = None
-                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 中央通信: {median_sp:.1f} KB/s (上限: {dynamic_net_limit:.1f} [基線{base_sp:.1f}+余白{margin_kbs:.1f}])  ", end="", flush=True)
+                    print(f"\r{get_timestamp()} [通信監視中] 通信待機中... | 中央通信: {median_sp:.1f} KB/s (上限: {dynamic_net_limit:.1f} [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}])  ", end="", flush=True)
 
             elif state == 2:
                 # 【消灯状態】
@@ -2635,7 +2635,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     # 消灯中に持続通信（動的しきい値超え）または WASAPI オーディオストリーム（通話等）を検知した場合
                     if median_sp > dynamic_net_limit or is_audio_active:
                         if low_net_standby_start_time is not None:
-                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 持続通信 ({median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [基線{base_sp:.1f}+余白{margin_kbs:.1f}])"
+                            reason_str = "🎙️ 通話/音声ストリーム" if is_audio_active else f"🔄 持続通信 ({median_sp:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}])"
                             print(f"\n{get_timestamp()} [タイマーリセット] {reason_str} を検知したためスリープタイマーをリセットしました。")
                         low_net_standby_start_time = time.time()
                         
@@ -2782,11 +2782,17 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                         pass
 
                                 # スリープ決定時点のState 2詳細ステータス文字列を作成
+                                margin_kbs = float(config.get("dynamic_network_margin_kbs", config.get("network_limit_kbs", 30.0)))
+                                base_sp = net_monitor.get_baseline_speed()
+                                dyn_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+                                dyn_limit_str = f"{dyn_limit:.1f} KB/s (ベース {base_sp:.1f} + マージン {margin_kbs:.1f} KB/s)"
+
                                 status_details_msg = (
                                     f"📊 **[決定時のステータス]**\n"
                                     f"·判定: `{current_status_reason}`\n"
                                     f"·電源プラン: `{plan_det_str}`\n"
                                     f"·通信速度: 中央値 {median_sp:.1f} KB/s (最高: {max_sp:.1f} KB/s)\n"
+                                    f"·動的通信上限: `{dyn_limit_str}`\n"
                                     f"·GPU使用率: {gpu_util} %\n"
                                     f"·電源予約: `{force_power_mode.upper() if force_power_mode else 'なし'}`"
                                 )
