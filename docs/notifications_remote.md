@@ -36,3 +36,22 @@ Dual Sleeper は、Discord への一方向通知（Webhook）および Telegram 
 
 ### スリープ予告割り込み機能
 スリープ移行直前の 30 秒間の予告通知が届いた際、Telegram で文字や数字を1文字送信するだけで、画面は消灯したまま **スリープ移行を 10 分間一時延長** できます。
+
+---
+
+## 🌐 3. Web WoL (CloudWaker) による PC 遠隔起動連携
+
+スリープ通知（Discord / Telegram）受信時、スマホからタップするだけで自宅 PC を遠隔起動できる Web WoL サービス [CloudWaker](https://cloudwaker.k7m.f5.si/) との連携方法です。
+
+### 設定手順
+1. スマホやPCのブラウザで **[CloudWaker (https://cloudwaker.k7m.f5.si/)](https://cloudwaker.k7m.f5.si/)** にアクセスします。
+2. 画面の指示に従って PC の MAC アドレスや Wake-on-LAN 起動データを設定し、発行された **専用起動 URL**（例: `https://cloudwaker.k7m.f5.si/?data=...`）をコピーします。
+3. `config.json` の `"wol_url"` にコピーした URL を貼り付けて保存します。
+
+```json
+"wol_url": "https://cloudwaker.k7m.f5.si/?data=..."
+```
+
+### 💡 活用メリット
+* PC がスリープに入る直前の通知（Discord / Telegram）の中に、自動的に **`⚡ PC遠隔起動リンク`** が添付されます。
+* 後から外出先で「PC を起動してファイルを操作したい」「リモートアクセスしたい」と思った際、スマホで通知内のリンクをタップするだけで、自宅 PC を即座に遠隔起動（WoL）できます！
