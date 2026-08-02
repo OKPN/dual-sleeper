@@ -2,7 +2,9 @@
 
 [🌐 日本語 (Japanese)](README.md) | **English**
 
-**Dual Sleeper** is an intelligent power & monitor management tool for Windows. Simply double-click `run.bat` to launch. It automatically manages screen dimming, system sleep, and emergency hibernation during nearby lightning storms for AI workstations, gaming PCs, and remote servers.
+> **Dual Sleeper** is a **context-aware power management application** that intelligently controls monitor screen-off and system sleep based on the user's real-time activities and behavior in front of the PC.
+
+Simply double-click `run.bat` to launch. It automatically manages screen dimming, system sleep, and emergency hibernation during nearby lightning storms for AI workstations, gaming PCs, and remote servers.
 
 No complex installation or account registration required. It runs quietly in the background, automatically detecting user idleness, unlisted video streaming, game server connections, voice calls, AI training, heavy CPU tasks (including Windows Update), and nearby lightning activity.
 
