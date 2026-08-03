@@ -2420,7 +2420,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             # 無操作時間の経過を待たずに、直接通信監視状態（State 1）へ移行してカウントを開始する
             if state == 0 and mode_val == "desktop" and is_desktop_active():
                 state = 1
-                low_net_start_time = time.time()
+                low_net_start_time = time.monotonic()
                 print(f"\n{get_timestamp()} [状態遷移] デスクトップ表示（サーバモード）を検知したため、直接「通信監視状態（State 1）」から開始します。")
 
             # ===== 各状態における動的しきい値の設定 =====
@@ -2499,7 +2499,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 last_detected_media_title = ""
                 last_detected_media_key = ""
                 state = 1 # 直接「通信監視状態 (State 1)」へ遷移！
-                low_net_start_time = time.time() # 通信量の監視を開始
+                low_net_start_time = time.monotonic() # 通信量の監視を開始
                 # 無操作時間はすでに満了しているものとして偽装（ダミー時刻セット）
                 last_wakeup_time = time.time() - config['idle_limit_seconds']
                 print(f"\n{get_timestamp()} [状態遷移] メディア強制点灯時間が終了しました。放置の可能性があるため、通信監視状態（State 1）へダイレクト移行します。")
@@ -2518,9 +2518,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 max_sp = max(interval_speeds) if interval_speeds else speed
                 
                 if state == 1:
-                    current_low_net_sec = time.time() - low_net_start_time
+                    current_low_net_sec = time.monotonic() - low_net_start_time
                 else:
-                    current_low_net_sec = time.time() - low_net_standby_start_time
+                    current_low_net_sec = time.monotonic() - low_net_standby_start_time
             else:
                 median_sp = speed
                 max_sp = speed
@@ -2794,9 +2794,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 # 移動中央値(Median)が固定しきい値以下、または「ブラウザがファイルダウンロード中」の場合
                 if median_sp <= state1_net_limit or is_downloading:
                     if low_net_start_time is None:
-                        low_net_start_time = time.time()
+                        low_net_start_time = time.monotonic()
                     
-                    elapsed_low_net = time.time() - low_net_start_time
+                    elapsed_low_net = time.monotonic() - low_net_start_time
                     dl_status = " (ダウンロード検出中)" if is_downloading else ""
                     rem_sec_off = max(0, int(net_check_duration - elapsed_low_net))
                     rem_off_str = f"{rem_sec_off // 60}分{rem_sec_off % 60}秒" if rem_sec_off >= 60 else f"{rem_sec_off}秒"
@@ -2906,7 +2906,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         
                         # 1. 低通信が5秒以上継続した場合に「省電力」へ切り替え
                         if allow_sleep and speed <= normal_net_limit:
-                            low_dur = (time.time() - low_net_standby_start_time) if low_net_standby_start_time else 0.0
+                            low_dur = (time.monotonic() - low_net_standby_start_time) if low_net_standby_start_time else 0.0
                             if low_dur >= 5.0 and not is_power_saver_applied:
                                 saver_guid = get_power_scheme_by_keyword("省電力")
                                 if saver_guid and set_power_scheme(saver_guid):
@@ -2918,8 +2918,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         # ➔ 「Windows Update/バックグラウンド通信等の自動化タスク」と判定し、再び「省電力」プロファイルへ自動移行！
                         elif bg_saver_limit > 0 and (not is_audio_active) and (not is_gpu_busy_with_python) and speed > normal_net_limit:
                             if background_net_continue_start_time is None:
-                                background_net_continue_start_time = time.time()
-                            elif time.time() - background_net_continue_start_time >= bg_saver_limit:
+                                background_net_continue_start_time = time.monotonic()
+                            elif time.monotonic() - background_net_continue_start_time >= bg_saver_limit:
                                 if not is_power_saver_applied:
                                     saver_guid = get_power_scheme_by_keyword("省電力")
                                     if saver_guid and set_power_scheme(saver_guid):
@@ -2933,7 +2933,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     
                     # 【リretry中の10分継続警告チェック】
                     if is_retrying and retry_start_time is not None and not has_sent_10min_warning:
-                        elapsed_retry = time.time() - retry_start_time
+                        elapsed_retry = time.monotonic() - retry_start_time
                         if elapsed_retry >= 600.0:  # 10分
                             send_notifications(
                                 config,
@@ -2944,9 +2944,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     
                     if allow_sleep:
                         if low_net_standby_start_time is None:
-                            low_net_standby_start_time = time.time()
+                            low_net_standby_start_time = time.monotonic()
                         
-                        elapsed_low_net_standby = time.time() - low_net_standby_start_time
+                        elapsed_low_net_standby = time.monotonic() - low_net_standby_start_time
                         state_label = "🎮 ゲーム放置中" if gpu_util >= game_gpu_threshold else "💤 放置中"
                         rem_sec_st = max(0, int(standby_limit - elapsed_low_net_standby))
                         rem_st_str = f"{rem_sec_st // 60}分{rem_sec_st % 60}秒" if rem_sec_st >= 60 else f"{rem_sec_st}秒"
@@ -3086,7 +3086,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                         # Telegramによる延長：画面は暗いまま、待機時間だけを10分(600秒)延長する！
                                         print(f"\n{get_timestamp()} [延長] Telegramからの割り込みを受信したため、スリープを10分間延長します。モニター消灯状態は維持されます。")
                                         state = 2 # 消灯を維持
-                                        low_net_standby_start_time = time.time() # タイマーのリセット
+                                        low_net_standby_start_time = time.monotonic() # タイマーのリセット
                                         extended_standby_limit = 600 # 延長時間（10分）を次のスリープ判定に強制適用
                                         is_retrying = False
                                         retry_start_time = None
@@ -3149,7 +3149,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                                     has_sent_10min_warning = False
                                     
                                 is_retrying = True # リトライフラグをON
-                                low_net_standby_start_time = time.time() - (standby_limit - 30)
+                                low_net_standby_start_time = time.monotonic() - (standby_limit - 30)
                             else:
                                 # 15秒以上経って戻ってきた ➔ 本物のスリープ成功＆正常復帰！
                                 # ※復帰直後は「通信監視状態（State 1）」から開始し、指定秒数監視後に分岐させる
