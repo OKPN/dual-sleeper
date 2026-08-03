@@ -1190,8 +1190,27 @@ def get_gpu_status(protect_processes, min_vram_mb=500):
         
     return gpu_util, protect_active
 
+def get_local_ip_set():
+    """自PCが所有するすべてのIPアドレス（127.0.0.1、LAN IP、Tailscale IP等）を安全に動的取得します。"""
+    ips = {"127.0.0.1", "0.0.0.0", "::1", "::", "*:*", "0.0.0.0:0", "localhost"}
+    try:
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            ips.add(ip.strip())
+    except Exception:
+        pass
+    try:
+        for iface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.address:
+                    clean_ip = addr.address.split('%')[0].strip()
+                    ips.add(clean_ip)
+    except Exception:
+        pass
+    return ips
+
 def check_game_server_port(ports_input):
-    """指定された1つまたは複数のポートに外部からのアクティブな接続が存在するか判定します（Tailscale/LAN完全対応）。"""
+    """指定された1つまたは複数のポートに外部からのアクティブな接続が存在するか判定します（自PC自身からの接続は全自動で除外）。"""
     if ports_input is None:
         return False, 0, ""
 
@@ -1215,6 +1234,7 @@ def check_game_server_port(ports_input):
 
     ports_str = ", ".join(str(p) for p in sorted(target_ports))
     active_count = 0
+    my_ips = get_local_ip_set()
 
     # 1. psutil によるソケット検査 (TCP/UDP)
     try:
@@ -1227,14 +1247,16 @@ def check_game_server_port(ports_input):
                 elif c.raddr and isinstance(c.raddr, tuple) and len(c.raddr) >= 1:
                     r_ip = str(c.raddr[0])
 
-                if r_ip and r_ip not in ("127.0.0.1", "::1", "0.0.0.0", "::"):
-                    active_count += 1
+                if r_ip:
+                    clean_r_ip = r_ip.split('%')[0].strip()
+                    if clean_r_ip not in my_ips:
+                        active_count += 1
         if active_count > 0:
             return True, active_count, ports_str
     except Exception:
         pass
 
-    # 2. netstat -ano の頑丈なCP932/Shift-JISエンコーディング解析 (Tailscale 100.x.x.x 及び LAN IP対応)
+    # 2. netstat -ano の頑丈なCP932/Shift-JISエンコーディング解析 (自PC所有IPを動的除外 ➔ 外部接続のみカウント)
     try:
         output = subprocess.check_output("netstat -ano", shell=True, text=True, encoding='cp932', errors='ignore')
         for line in output.splitlines():
@@ -1245,15 +1267,10 @@ def check_game_server_port(ports_input):
                 for p_num in target_ports:
                     # ローカルポート判定 (:2283 や :8211 など)
                     if local_addr.endswith(f":{p_num}") or f":{p_num} " in f"{local_addr} ":
-                        # 外部アドレスの除外判定 (127.0.0.1, 0.0.0.0, [::], *:*, 0.0.0.0:0 を除外 ➔ Tailscale 100.x 及び LAN IPを全捕捉)
-                        if foreign_addr and not (
-                            foreign_addr.startswith("127.0.0.1") or
-                            foreign_addr.startswith("0.0.0.0") or
-                            foreign_addr.startswith("[::]") or
-                            foreign_addr.startswith("*:*") or
-                            foreign_addr == "0.0.0.0:0"
-                        ):
-                            active_count += 1
+                        if foreign_addr:
+                            f_ip = foreign_addr.rsplit(':', 1)[0].replace('[', '').replace(']', '').strip()
+                            if f_ip not in my_ips and not any(foreign_addr.startswith(prefix) for prefix in ("127.0.0.1", "0.0.0.0", "[::]", "*:*", "0.0.0.0:0")):
+                                active_count += 1
         if active_count > 0:
             return True, active_count, ports_str
     except Exception:
