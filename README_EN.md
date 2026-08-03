@@ -82,6 +82,10 @@ No complex installation or account registration required. It runs quietly in the
 | | `download_completion_notification.enabled` | `false` | bool | Send alert when large downloads complete. |
 | | `download_completion_notification.min_duration_seconds` | `600` | sec | Minimum traffic duration threshold (e.g. 10 min). |
 | | `download_completion_notification.trigger_condition` | `"state2_only"` | string | Trigger condition (`"state2_only"` while idle/screen-off, `"always"`). |
+| | `ai_completion_notification.enabled` | `false` | bool | Send alert when AI generation/inference completes. |
+| | `ai_completion_notification.min_duration_seconds` | `30` | sec | Minimum AI processing duration threshold (30 sec). |
+| | `ai_completion_notification.trigger_condition` | `"always"` | string | Trigger condition (`"always"`, `"state2_only"`). |
+| | `ai_completion_notification.desktop_toast` | `true` | bool | Display Windows native desktop toast notification. |
 | | `sleep_pending_seconds` | `30` | sec | Pre-sleep countdown warning display duration. |
 | | `desktop_notification` | `"weather_only"` | string | Windows native toast notifications (`"off"`, `"weather_only"`, `"all"`). |
 | **Wakeup** | `wakeup_mouse_distance_px` | `100` | px | Pixel distance threshold to ignore mouse micro-vibrations on wake. |

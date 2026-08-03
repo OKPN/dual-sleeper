@@ -34,6 +34,13 @@
     "trigger_condition": "state2_only"
   },
 
+  "ai_completion_notification": {
+    "enabled": false,
+    "min_duration_seconds": 30,
+    "trigger_condition": "always",
+    "desktop_toast": true
+  },
+
   "power_plan_control": {
     "enabled": false,
     "restore_on_exit": true,

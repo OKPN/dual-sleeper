@@ -76,3 +76,28 @@ Steam ゲームのアップデート、大容量ファイル、AIモデルチェ
 * **`trigger_condition`**: 
   * `"state2_only"` **(推奨・初期値)**: 離席中・画面消灯中 (State 2) にダウンロードが完了した場合のみスマホへ通知。作業中 (State 0/1) の通知をスルーします。
   * `"always"`: 作業中であってもダウンロード完了時に常時通知します。
+
+---
+
+## 🤖 AI生成・処理完了のデスクトップ ✕ スマホ自動通知
+
+ComfyUI、SD-WebUI、PyTorch、llama-server 等による重い生成タスクが終了した際、**Windows画面右下のポップアップ通知（トースト）およびスマホ（Discord / Telegram）へ完了通知を即座に送信** できます。
+
+```json
+"ai_completion_notification": {
+  "enabled": true,
+  "min_duration_seconds": 30,
+  "trigger_condition": "always",
+  "desktop_toast": true
+}
+```
+
+### ⚙️ 特長と設定オプション
+* **5秒間デバウンス（誤通知防止）**:  
+  ステップの切り替わりやバッチ生成の合間で一瞬だけ GPU 使用率がドロップした際に誤通知しないよう、**5 秒間連続で判定が解除された際** に初めて「完了」と判定します。
+* **`enabled`**: 機能を有効化（`true` / `false`）。
+* **`min_duration_seconds`**: 通知対象とする最小AI処理継続時間（秒単位。`30`秒未満の軽い生成はスルー）。
+* **`trigger_condition`**: 
+  * `"always"` **(推奨・初期値)**: PC前で別作業中であっても、離席中であっても常に完了通知を発行。
+  * `"state2_only"`: 離席消灯中 (State 2) のみ通知。
+* **`desktop_toast`**: Windows標準の画面右下トースト通知（`true` / `false`）。PCの前で別タブ作業をしていても「ピコン♪」とポップアップ音で完了が分かります。

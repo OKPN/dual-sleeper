@@ -2039,6 +2039,12 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     high_net_session_max_speed = 0.0
     high_net_session_drop_start_time = None
     
+    # AI処理 / 生成完了通知用変数
+    ai_session_start_time = None
+    ai_session_max_gpu = 0.0
+    ai_session_proc_name = ""
+    ai_session_drop_start_time = None
+    
     standby_limit = config.get("standby_after_monitor_off_seconds", 300)
     
     # 通信監視区間・消灯区間の速度統計（中央値・最高計算用）
@@ -2524,6 +2530,47 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             is_gpu_busy_with_python = (gpu_limit > 0 and gpu_util >= gpu_limit and gpu_protect_active)
             high_net_limit = config.get("high_network_limit_kbs", 625.0)
             normal_net_limit = net_monitor.get_dynamic_threshold(config.get("dynamic_network_margin_kbs", 20.0))
+
+            # ===== AI生成・処理完了通知判定 (ai_completion_notification) =====
+            ai_notify_cfg = config.get("ai_completion_notification", {})
+            if isinstance(ai_notify_cfg, dict) and ai_notify_cfg.get("enabled", False):
+                min_ai_dur = float(ai_notify_cfg.get("min_duration_seconds", 30))
+                ai_trig_cond = str(ai_notify_cfg.get("trigger_condition", "always")).lower()
+                use_toast = ai_notify_cfg.get("desktop_toast", True)
+
+                if is_gpu_busy_with_python:
+                    if ai_session_start_time is None:
+                        ai_session_start_time = time.monotonic()
+                        ai_session_max_gpu = gpu_util
+                    else:
+                        ai_session_max_gpu = max(ai_session_max_gpu, gpu_util)
+                    ai_session_drop_start_time = None
+                else:
+                    if ai_session_start_time is not None:
+                        if ai_session_drop_start_time is None:
+                            ai_session_drop_start_time = time.monotonic()
+                        elif time.monotonic() - ai_session_drop_start_time >= 5.0: # 5秒間の連続判定解除（デバウンス）で完了確定
+                            session_dur = ai_session_drop_start_time - ai_session_start_time
+                            if session_dur >= min_ai_dur:
+                                should_ai_notify = (ai_trig_cond != "state2_only") or (state == 2)
+                                if should_ai_notify:
+                                    dur_min = int(session_dur // 60)
+                                    dur_sec = int(session_dur % 60)
+                                    dur_str = f"{dur_min} 分 {dur_sec} 秒" if dur_min > 0 else f"{dur_sec} 秒"
+                                    ai_msg = (
+                                        f"🤖 **[{pc_name}] AI生成・処理完了**\n"
+                                        f"·処理時間: {dur_str}\n"
+                                        f"·最高GPU負荷: {int(ai_session_max_gpu)} %\n"
+                                        f"·現在の状態: AI処理が完了したため、通常監視へ復帰します。"
+                                    )
+                                    send_discord_notification(config.get("discord_webhook_url"), ai_msg)
+                                    send_telegram_notification(config.get("telegram_bot_token"), config.get("telegram_chat_id"), ai_msg)
+                                    if use_toast:
+                                        send_windows_desktop_notification(f"🤖 {pc_name} - AI処理完了", f"AI生成・処理が完了しました (処理時間: {dur_str} / 最高GPU: {int(ai_session_max_gpu)}%)")
+                                    print(f"\n{get_timestamp()} [通知] AI生成・処理完了通知を送信しました (所要時間: {dur_str})")
+                            ai_session_start_time = None
+                            ai_session_max_gpu = 0.0
+                            ai_session_drop_start_time = None
 
             # ゲームGPU判定の閾値（GPU使用率30%以上を「ゲーム等のGPU使用放置」とみなす）
             game_gpu_threshold = config.get("game_gpu_threshold_percent", 30)
