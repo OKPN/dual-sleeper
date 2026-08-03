@@ -92,6 +92,7 @@ No complex installation or account registration required. It runs quietly in the
 | | `wakeup_mouse_grace_seconds` | `20` | sec | Grace period to ignore OS internal noise right after waking up. |
 | | `wakeup_active_threshold_seconds` | `5` | sec | Continuous user activity duration needed to mark active post-wake. |
 | **Power Plan** | `power_plan_control.enabled` | `false` | bool | Dynamic Windows Power Scheme switching (Power Saver / High Performance). |
+| | `power_plan_control.default_power_plan` | `""` | string | Explicit restore power plan (e.g. `"Balanced"`, `""` for auto + saver guard). |
 | | `power_plan_control.cpu_heavy_threshold_percent` | `80` | % | CPU load threshold for Windows Update / video encoding protection. |
 | | `power_plan_control.cpu_heavy_duration_seconds` | `5` | sec | Sustained CPU load duration required to trigger CPU protection. |
 | | `power_plan_control.power_saver_on_idle_monitor_off` | `true` | bool | Auto-switch to "Power Saver" plan when screen turns off in State 2. |

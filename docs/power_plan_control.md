@@ -14,6 +14,7 @@ Dual Sleeper は、Windows OS 標準の電源プラン（GUID）を状況に応�
 ```json
 "power_plan_control": {
   "enabled": true,
+  "default_power_plan": "",
   "restore_on_exit": true,
   "power_saver_on_idle_monitor_off": true,
   "ultimate_on_game": true,
@@ -23,6 +24,12 @@ Dual Sleeper は、Windows OS 標準の電源プラン（GUID）を状況に応�
   "cpu_heavy_duration_seconds": 5
 }
 ```
+
+### ⚙️ 設定オプション
+* **`default_power_plan`**:  
+  復元先の標準電源プランの固定指定（`""` でアプリ起動時のプランを自動判定）。  
+  * `""` (初期値): 起動時のアクティブプランを自動取得。万が一起動時に「省電力」だった場合は自動で「バランス」を安全保存。
+  * `"バランス"`, `"高パフォーマンス"`, `"究極"` 等を指定すると、起動時の状態に関わらず、常にそのプランを元プランとして復元固定します。
 
 ---
 

@@ -98,6 +98,7 @@
 | | `wakeup_mouse_grace_seconds` | `20` | 秒 | スリープ復帰後、OSの内部ノイズを無視する保護猶予時間。 |
 | | `wakeup_active_threshold_seconds` | `5` | 秒 | 復帰後、連続で操作があった場合にアクティブとみなす秒数。 |
 | **電源制御** | `power_plan_control.enabled` | `false` | bool | Windows電源プラン（省電力/バランス/高パフォーマンス）自動切替。 |
+| | `power_plan_control.default_power_plan` | `""` | 文字列 | 復元先の標準電源プランの固定指定（`""` で起動時自動判定＋省電力ガード）。 |
 | | `power_plan_control.cpu_heavy_threshold_percent` | `80` | % | CPU高負荷保護（Windows Update等）を発動する使用率しきい値。 |
 | | `power_plan_control.cpu_heavy_duration_seconds` | `5` | 秒 | CPU高負荷判定に必要な継続時間。 |
 | | `power_plan_control.power_saver_on_idle_monitor_off` | `true` | bool | 放置消灯時に自動で「省電力」プランへ切り替えるか。 |

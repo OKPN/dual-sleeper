@@ -2007,13 +2007,32 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
 
     net_monitor = NetworkMonitor()
     
-    # 電源プロファイル制御の有効化時、現在アクティブな元プランを保存
+    # 電源プロファイル制御の有効化時、現在アクティブな元プランを保存 (default_power_plan 指定 + 省電力誤記憶防止ガード)
     p_cfg = config.get("power_plan_control", {})
     if p_cfg.get("enabled", False):
-        original_power_plan_guid, original_power_plan_name = get_active_power_scheme()
-        if original_power_plan_guid:
-            name_str = f" ({original_power_plan_name})" if original_power_plan_name else ""
-            print(f"{get_timestamp()} [電源プロファイル制御] 元の電源プラン{name_str} を安全保存しました。")
+        user_def_plan = str(p_cfg.get("default_power_plan", "")).strip()
+        if user_def_plan:
+            target_guid = get_power_scheme_by_keyword(user_def_plan)
+            if target_guid:
+                original_power_plan_guid = target_guid
+                original_power_plan_name = user_def_plan
+                print(f"{get_timestamp()} [電源プロファイル制御] 設定指定の元プラン ({original_power_plan_name}) を復元対象として固定保存しました。")
+        
+        if not original_power_plan_guid:
+            act_guid, act_name = get_active_power_scheme()
+            # 安全ガード: 万が一起動時に「省電力」になっていた場合は「バランス」をデフォルト元プランとして安全保存
+            if act_name and ("省電力" in act_name.lower() or "saver" in act_name.lower() or act_guid == "a1841308-3541-4fab-bc81-f71556f20b4a"):
+                bal_guid = get_power_scheme_by_keyword("バランス")
+                if bal_guid:
+                    original_power_plan_guid = bal_guid
+                    original_power_plan_name = "バランス (自動補正)"
+                    print(f"{get_timestamp()} [電源プロファイル制御] 起動時プランが「省電力」だったため、復元対象を「バランス (自動補正)」へ安全保存しました。")
+            
+            if not original_power_plan_guid and act_guid:
+                original_power_plan_guid = act_guid
+                original_power_plan_name = act_name
+                name_str = f" ({original_power_plan_name})" if original_power_plan_name else ""
+                print(f"{get_timestamp()} [電源プロファイル制御] 元の電源プラン{name_str} を安全保存しました。")
     
     # 状態定義:
     # 0: 通常状態（無操作時間を見守る）

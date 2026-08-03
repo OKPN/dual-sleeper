@@ -43,6 +43,7 @@
 
   "power_plan_control": {
     "enabled": false,
+    "default_power_plan": "",
     "restore_on_exit": true,
     "power_saver_on_idle_monitor_off": true,
     "ultimate_on_game": true,
