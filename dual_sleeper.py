@@ -2034,6 +2034,11 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     last_controller_input_time = 0.0
     last_game_server_active_time = 0.0
     
+    # 大容量ダウンロード / 高通信完了通知用変数
+    high_net_session_start_time = None
+    high_net_session_max_speed = 0.0
+    high_net_session_drop_start_time = None
+    
     standby_limit = config.get("standby_after_monitor_off_seconds", 300)
     
     # 通信監視区間・消灯区間の速度統計（中央値・最高計算用）
@@ -2282,6 +2287,45 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
             margin_kbs = config.get("dynamic_network_margin_kbs", 20.0)
             current_net_baseline_speed = net_monitor.get_baseline_speed()
             current_net_dynamic_limit = net_monitor.get_dynamic_threshold(margin_kbs)
+            
+            # ===== 大容量ダウンロード / 高通信完了通知判定 (download_completion_notification) =====
+            dl_notify_cfg = config.get("download_completion_notification", {})
+            if isinstance(dl_notify_cfg, dict) and dl_notify_cfg.get("enabled", False):
+                high_limit = float(dl_notify_cfg.get("threshold_kbs", config.get("high_network_limit_kbs", 625.0)))
+                min_dur_sec = float(dl_notify_cfg.get("min_duration_seconds", 600))
+                trig_cond = str(dl_notify_cfg.get("trigger_condition", "state2_only")).lower()
+
+                if speed >= high_limit:
+                    if high_net_session_start_time is None:
+                        high_net_session_start_time = time.monotonic()
+                        high_net_session_max_speed = speed
+                    else:
+                        high_net_session_max_speed = max(high_net_session_max_speed, speed)
+                    high_net_session_drop_start_time = None
+                else:
+                    if high_net_session_start_time is not None:
+                        if high_net_session_drop_start_time is None:
+                            high_net_session_drop_start_time = time.monotonic()
+                        elif time.monotonic() - high_net_session_drop_start_time >= 10.0: # 10秒間の連続収束確認で完了判定
+                            session_duration = high_net_session_drop_start_time - high_net_session_start_time
+                            if session_duration >= min_dur_sec:
+                                should_notify = (trig_cond != "state2_only") or (state == 2)
+                                if should_notify:
+                                    dur_min = int(session_duration // 60)
+                                    dur_sec = int(session_duration % 60)
+                                    max_mbps = (high_net_session_max_speed * 8.0) / 1024.0
+                                    dl_msg = (
+                                        f"📥 **[{pc_name}] 大容量通信 / ダウンロード完了**\n"
+                                        f"·継続時間: {dur_min} 分 {dur_sec} 秒\n"
+                                        f"·最高速度: {high_net_session_max_speed / 1024.0:.1f} MB/s ({max_mbps:.1f} Mbps)\n"
+                                        f"·現在の状態: 高トラフィックが収束したため、放置スリープ監視へ復帰します。"
+                                    )
+                                    send_discord_notification(config.get("discord_webhook_url"), dl_msg)
+                                    send_telegram_notification(config.get("telegram_bot_token"), config.get("telegram_chat_id"), dl_msg)
+                                    print(f"\n{get_timestamp()} [通知] 大容量ダウンロード/高トラフィック完了通知を送信しました (継続: {dur_min}分{dur_sec}秒)")
+                            high_net_session_start_time = None
+                            high_net_session_max_speed = 0.0
+                            high_net_session_drop_start_time = None
             
             # 物理的な無操作時間（キーボード・マウス）を取得
             physical_idle = get_idle_duration()

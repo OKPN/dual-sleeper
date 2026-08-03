@@ -79,6 +79,9 @@ No complex installation or account registration required. It runs quietly in the
 | **Notifications**| `discord_webhook_url` | `""` | URL | Discord Webhook URL for one-way alerts. |
 | | `telegram_bot_token` / `chat_id` | `""` / `""` | string | Telegram Bot Token and Chat ID for remote control and alerts. |
 | | `wol_url` | `""` | URL | Web WoL (CloudWaker) one-tap wake-up URL. |
+| | `download_completion_notification.enabled` | `false` | bool | Send alert when large downloads complete. |
+| | `download_completion_notification.min_duration_seconds` | `600` | sec | Minimum traffic duration threshold (e.g. 10 min). |
+| | `download_completion_notification.trigger_condition` | `"state2_only"` | string | Trigger condition (`"state2_only"` while idle/screen-off, `"always"`). |
 | | `sleep_pending_seconds` | `30` | sec | Pre-sleep countdown warning display duration. |
 | | `desktop_notification` | `"weather_only"` | string | Windows native toast notifications (`"off"`, `"weather_only"`, `"all"`). |
 | **Wakeup** | `wakeup_mouse_distance_px` | `100` | px | Pixel distance threshold to ignore mouse micro-vibrations on wake. |

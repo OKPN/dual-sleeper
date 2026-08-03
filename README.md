@@ -85,6 +85,9 @@
 | **通知・遠隔** | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
 | | `telegram_bot_token` / `chat_id` | `""` / `""` | 文字列 | Telegram Bot 連携トークン ＆ チャットID。 |
 | | `wol_url` | `""` | URL | Web WoL (CloudWaker) による PC 遠隔起動 URL。 |
+| | `download_completion_notification.enabled` | `false` | bool | 巨大DL・高通信完了時の自動通知（初期無効）。 |
+| | `download_completion_notification.min_duration_seconds` | `600` | 秒 | DL完了通知の対象とする最小通信継続時間（10分）。 |
+| | `download_completion_notification.trigger_condition` | `"state2_only"` | 文字列 | 通知条件（`"state2_only"` 離席中のみ, `"always"` 常時）。 |
 | | `sleep_pending_seconds` | `30` | 秒 | スリープ直前の予告通知のカウントダウン表示時間。 |
 | | `desktop_notification` | `"weather_only"` | 文字列 | Windows標準トースト通知（`"off"`, `"weather_only"`, `"all"`）。 |
 | **復帰誤作動** | `wakeup_mouse_distance_px` | `100` | px | スリープ復帰直後、マウスの微振動を無視するピクセル距離。 |

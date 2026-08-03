@@ -28,6 +28,12 @@
   "wakeup_active_threshold_seconds": 5,
   "desktop_notification": "weather_only",
 
+  "download_completion_notification": {
+    "enabled": false,
+    "min_duration_seconds": 600,
+    "trigger_condition": "state2_only"
+  },
+
   "power_plan_control": {
     "enabled": false,
     "restore_on_exit": true,
