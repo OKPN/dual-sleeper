@@ -29,6 +29,10 @@ No complex installation or account registration required. It runs quietly in the
    * Detects temporary download files (`.crdownload`, `.part`) to delay sleep until downloads complete.
 6. **Lightning & Heavy Rain Protection (Open-Meteo Integration)**
    * Automatically escalates standby to **Hibernation (S4: Power Off)** when lightning, heavy rain, or high CAPE index is detected near your location while away.
+7. **Download Completion Notifications**
+   * Automatically sends Discord / Telegram alerts when high-traffic sessions (>=10 mins) settle down while in screen-off State 2.
+8. **AI Completion Desktop & Mobile Alerts**
+   * Triggers Windows native desktop toast popups (when active) and mobile alerts (when away) as soon as heavy AI tasks (ComfyUI, PyTorch >=30s) complete.
 
 ---
 

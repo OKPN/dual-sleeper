@@ -15,7 +15,7 @@
 
   "game_server_protection": {
     "enabled": false,
-    "ports": [8211, 2283]
+    "ports": [7860, 8211]
   },
 
   "discord_webhook_url": "",
