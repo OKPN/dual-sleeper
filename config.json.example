@@ -36,7 +36,7 @@
 
   "ai_completion_notification": {
     "enabled": false,
-    "min_duration_seconds": 30,
+    "min_duration_seconds": 60,
     "trigger_condition": "always",
     "desktop_toast": true
   },
@@ -76,14 +76,9 @@
     "python",
     "llama-server.exe",
     "llama-server",
-    "language_server.exe",
-    "language_server",
     "lmstudio.exe",
     "lm-studio.exe",
-    "lms.exe",
-    "vmmemwsl",
-    "wsl.exe",
-    "wslhost.exe"
+    "lms.exe"
   ],
   "gpu_protect_min_vram_mb": 4000,
   "gpu_limit_percent": 40,

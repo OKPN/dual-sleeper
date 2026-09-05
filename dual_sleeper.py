@@ -1163,23 +1163,39 @@ def get_gpu_status(protect_processes, min_vram_mb=500):
                     a_target = active_filename[:-4] if active_filename.endswith(".exe") else active_filename
                     a_normalized = a_target.replace("-", "_")
                     
-                    # 1. 設定リストとの完全一致・表記揺れ一致・相互部分一致
+                    # 判定補助: WDDM等でused_mem_mbがN/A(0)の場合、該当プロセスのRAM消費(モデル展開)をチェック
+                    def is_process_actively_consuming(target_name):
+                        if used_mem_mb >= min_vram_mb:
+                            return True
+                        # used_mem_mbが0(N/A)の場合、psutilで実プロセスのRAM消費(1.5GB以上)を確認して常駐軽量プロセスを除外
+                        try:
+                            for proc in psutil.process_iter(['name', 'memory_info']):
+                                if proc.info['name'] and proc.info['name'].lower() == target_name:
+                                    mem_mb = proc.info['memory_info'].rss / (1024 * 1024)
+                                    if mem_mb >= 1500: # 1.5GB以上のモデル展開
+                                        return True
+                        except Exception:
+                            pass
+                        return False
+
+                    # 1. 設定リストとの完全一致・表記揺れ一致（※危険な部分一致 a_target in p_target を排除）
                     for protect_p in protect_processes:
                         p_name_lower = protect_p.lower()
                         p_target = p_name_lower[:-4] if p_name_lower.endswith(".exe") else p_name_lower
                         p_normalized = p_target.replace("-", "_")
                         
-                        if a_target == p_target or a_normalized == p_normalized or p_target in a_target or a_target in p_target:
-                            # N/A(0MB)で返ってくるWDDM環境でも、AIプロセス名に合致すれば確実にAI認定！
-                            if used_mem_mb >= min_vram_mb or used_mem_mb == 0:
+                        is_match = (a_target == p_target or a_normalized == p_normalized or 
+                                    (len(p_target) >= 4 and p_target in a_target))
+                        if is_match:
+                            if is_process_actively_consuming(active_filename):
                                 protect_active = True
                                 break
                     
-                    # 2. LM Studio / OpenClaw / llama.cpp などのローカルAI計算エンジンのスマート自動認識
+                    # 2. LM Studio / llama.cpp などのローカルAI計算エンジンのスマート自動認識 (常駐エディタ関連を除外)
                     if not protect_active:
-                        ai_kw_list = ["language_server", "lmstudio", "lm-studio", "lms", "llama-server", "llama_server"]
-                        if any(kw in a_target for kw in ai_kw_list):
-                            if used_mem_mb >= min_vram_mb or used_mem_mb == 0:
+                        ai_kw_list = ["lmstudio", "lm-studio", "llama-server", "llama_server"]
+                        if any(kw == a_target or kw in a_target for kw in ai_kw_list):
+                            if is_process_actively_consuming(active_filename):
                                 protect_active = True
 
                     if protect_active:
