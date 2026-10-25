@@ -12,12 +12,13 @@
   "no_sleep_end_hour": 0,
   "force_monitor_off_idle_seconds": 900,
   "force_sleep_on_dialog": false,
-
   "game_server_protection": {
     "enabled": false,
-    "ports": [7860, 8211]
+    "ports": [
+      7860,
+      8211
+    ]
   },
-
   "discord_webhook_url": "",
   "telegram_bot_token": "",
   "telegram_chat_id": "",
@@ -27,20 +28,18 @@
   "wakeup_mouse_grace_seconds": 20,
   "wakeup_active_threshold_seconds": 5,
   "desktop_notification": "weather_only",
-
   "download_completion_notification": {
     "enabled": false,
     "min_duration_seconds": 600,
     "trigger_condition": "state2_only"
   },
-
   "ai_completion_notification": {
     "enabled": false,
     "min_duration_seconds": 60,
     "trigger_condition": "always",
-    "desktop_toast": true
+    "desktop_toast": true,
+    "debounce_seconds": 15
   },
-
   "power_plan_control": {
     "enabled": false,
     "default_power_plan": "",
@@ -51,9 +50,9 @@
     "high_performance_on_cpu": true,
     "cpu_heavy_threshold_percent": 80,
     "cpu_heavy_duration_seconds": 5,
-    "auto_background_saver_seconds": 60
+    "auto_background_saver_seconds": 60,
+    "ai_plan_cooldown_seconds": 180
   },
-
   "lightning_protection": {
     "enabled": false,
     "location": "35.681236, 139.767125",
@@ -70,7 +69,6 @@
       "standby_seconds": 1200
     }
   },
-
   "gpu_protect_processes": [
     "python.exe",
     "python",
@@ -83,7 +81,6 @@
   "gpu_protect_min_vram_mb": 4000,
   "gpu_limit_percent": 40,
   "game_gpu_threshold_percent": 30,
-
   "keep_awake_window_titles": [
     "youtube:20",
     "twitch",
@@ -91,7 +88,6 @@
     "obs:360",
     "discord:30"
   ],
-
   "server_mode": "off",
   "server_mode_standby_delay_seconds": 600
 }

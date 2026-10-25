@@ -2589,6 +2589,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 min_ai_dur = float(ai_notify_cfg.get("min_duration_seconds", 30))
                 ai_trig_cond = str(ai_notify_cfg.get("trigger_condition", "always")).lower()
                 use_toast = ai_notify_cfg.get("desktop_toast", True)
+                ai_debounce = float(ai_notify_cfg.get("debounce_seconds", 15.0)) # ステップ間の誤通知防止デバウンス (初期値15秒)
 
                 if is_gpu_busy_with_python:
                     if ai_session_start_time is None:
@@ -2601,7 +2602,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     if ai_session_start_time is not None:
                         if ai_session_drop_start_time is None:
                             ai_session_drop_start_time = time.monotonic()
-                        elif time.monotonic() - ai_session_drop_start_time >= 5.0: # 5秒間の連続判定解除（デバウンス）で完了確定
+                        elif time.monotonic() - ai_session_drop_start_time >= ai_debounce: # 設定秒数の連続判定解除で完了確定
                             session_dur = ai_session_drop_start_time - ai_session_start_time
                             if session_dur >= min_ai_dur:
                                 should_ai_notify = (ai_trig_cond != "state2_only") or (state == 2)
@@ -2653,6 +2654,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                 # 🥇 第 1 優先: CPU高負荷 (アプローチ A) または AI利用中
                 if is_cpu_heavy or is_ai_active:
                     game_gpu_idle_start_time = None
+                    if is_ai_active:
+                        ai_gpu_idle_start_time = None
                     if not is_ai_plan_applied and not is_cpu_plan_applied:
                         high_guid = get_power_scheme_by_keyword("高パフォーマンス")
                         if high_guid and set_power_scheme(high_guid):
@@ -2690,9 +2693,10 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             restore_original_power_scheme()
                             cpu_heavy_start_time = None
                     elif is_ai_plan_applied:
+                        ai_cooldown = float(p_cfg.get("ai_plan_cooldown_seconds", 180.0))
                         if ai_gpu_idle_start_time is None:
-                            ai_gpu_idle_start_time = time.time()
-                        elif time.time() - ai_gpu_idle_start_time >= 30.0:
+                            ai_gpu_idle_start_time = time.monotonic()
+                        elif time.monotonic() - ai_gpu_idle_start_time >= ai_cooldown:
                             restore_original_power_scheme()
                             ai_gpu_idle_start_time = None
                     elif is_ultimate_plan_applied:
@@ -2938,7 +2942,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         bg_saver_limit = p_cfg.get("auto_background_saver_seconds", 60)
                         
                         # 1. 低通信が5秒以上継続した場合に「省電力」へ切り替え
-                        if allow_sleep and speed <= normal_net_limit:
+                        # ※ AI高パフォーマンス適用中(is_ai_plan_applied: 3分クールダウン中含む)は絶対に省電力へ落とさない！
+                        if allow_sleep and speed <= normal_net_limit and not is_ai_plan_applied:
                             low_dur = (time.monotonic() - low_net_standby_start_time) if low_net_standby_start_time else 0.0
                             if low_dur >= 5.0 and not is_power_saver_applied:
                                 saver_guid = get_power_scheme_by_keyword("省電力")
@@ -2949,7 +2954,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         
                         # 2. 消灯放置中に通信が発生しバランスに戻った後、無操作のまま通信が N 秒(初期値60秒)継続した場合
                         # ➔ 「Windows Update/バックグラウンド通信等の自動化タスク」と判定し、再び「省電力」プロファイルへ自動移行！
-                        elif bg_saver_limit > 0 and (not is_audio_active) and (not is_gpu_busy_with_python) and speed > normal_net_limit:
+                        elif bg_saver_limit > 0 and (not is_audio_active) and (not is_gpu_busy_with_python) and (not is_ai_plan_applied) and speed > normal_net_limit:
                             if background_net_continue_start_time is None:
                                 background_net_continue_start_time = time.monotonic()
                             elif time.monotonic() - background_net_continue_start_time >= bg_saver_limit:
@@ -2961,7 +2966,7 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                         else:
                             background_net_continue_start_time = None
 
-                        if not allow_sleep:
+                        if not allow_sleep and not is_ai_plan_applied:
                             restore_original_power_scheme()
                     
                     # 【リretry中の10分継続警告チェック】

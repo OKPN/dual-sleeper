@@ -96,6 +96,7 @@
 | | `ai_completion_notification.min_duration_seconds` | `30` | 秒 | AI完了通知の対象とする最小処理継続時間（30秒）。 |
 | | `ai_completion_notification.trigger_condition` | `"always"` | 文字列 | 通知条件（`"always"` 常時, `"state2_only"` 離席中のみ）。 |
 | | `ai_completion_notification.desktop_toast` | `true` | bool | Windows画面右下ポップアップ(トースト)通知を表示するか。 |
+| | `ai_completion_notification.debounce_seconds` | `15` | 秒 | AI完了判定に必要な連続アイドル秒数（ステップ間の誤通知防止）。 |
 | | `sleep_pending_seconds` | `30` | 秒 | スリープ直前の予告通知のカウントダウン表示時間。 |
 | | `desktop_notification` | `"weather_only"` | 文字列 | Windows標準トースト通知（`"off"`, `"weather_only"`, `"all"`）。 |
 | **復帰誤作動** | `wakeup_mouse_distance_px` | `100` | px | スリープ復帰直後、マウスの微振動を無視するピクセル距離。 |
@@ -109,6 +110,7 @@
 | | `power_plan_control.ultimate_on_game` | `true` | bool | GPUゲーム起動時に「究極のパフォーマンス」へ昇格するか。 |
 | | `power_plan_control.high_performance_on_ai` | `true` | bool | AI推論・学習検知時に「高パフォーマンス」へ昇格するか。 |
 | | `power_plan_control.high_performance_on_cpu` | `true` | bool | CPU高負荷検知時に「高パフォーマンス」へ昇格するか。 |
+| | `power_plan_control.ai_plan_cooldown_seconds` | `180` | 秒 | AI処理終了後、高パフォーマンスを維持するクールダウン秒数（3分、急な電圧降下防止）。 |
 | **落雷保護** | `lightning_protection.enabled` | `false` | bool | 近隣の落雷・豪雨接近時の自動休止状態退避機能。 |
 | | `lightning_protection.location` | `"35.681236, 139.767125"` | 緯度,経度 | PC設置場所の Google マップ座標（東京駅例）。 |
 | | `lightning_protection.auto_hibernate` | `"state2_only"` | 文字列 | 自動休止の動作条件（`"state2_only"`, `"always"`, `"off"`）。 |

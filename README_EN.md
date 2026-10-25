@@ -90,6 +90,7 @@ No complex installation or account registration required. It runs quietly in the
 | | `ai_completion_notification.min_duration_seconds` | `30` | sec | Minimum AI processing duration threshold (30 sec). |
 | | `ai_completion_notification.trigger_condition` | `"always"` | string | Trigger condition (`"always"`, `"state2_only"`). |
 | | `ai_completion_notification.desktop_toast` | `true` | bool | Display Windows native desktop toast notification. |
+| | `ai_completion_notification.debounce_seconds` | `15` | sec | Continuous idle duration required before confirming AI completion (avoids false alerts between steps). |
 | | `sleep_pending_seconds` | `30` | sec | Pre-sleep countdown warning display duration. |
 | | `desktop_notification` | `"weather_only"` | string | Windows native toast notifications (`"off"`, `"weather_only"`, `"all"`). |
 | **Wakeup** | `wakeup_mouse_distance_px` | `100` | px | Pixel distance threshold to ignore mouse micro-vibrations on wake. |
@@ -103,6 +104,7 @@ No complex installation or account registration required. It runs quietly in the
 | | `power_plan_control.ultimate_on_game` | `true` | bool | Elevate to "Ultimate Performance" plan during GPU gaming. |
 | | `power_plan_control.high_performance_on_ai` | `true` | bool | Elevate to "High Performance" plan during AI inference/training. |
 | | `power_plan_control.high_performance_on_cpu` | `true` | bool | Elevate to "High Performance" plan during heavy CPU load. |
+| | `power_plan_control.ai_plan_cooldown_seconds` | `180` | sec | Cooldown duration to maintain High Performance post-AI (3 mins, prevents transient voltage drops). |
 | **Lightning** | `lightning_protection.enabled` | `false` | bool | Emergency auto-hibernation during nearby lightning/storm alerts. |
 | | `lightning_protection.location` | `"35.681236, 139.767125"` | lat,lon | Google Maps coordinates for Open-Meteo weather scans (Tokyo Station). |
 | | `lightning_protection.auto_hibernate` | `"state2_only"` | string | Auto-hibernate triggers (`"state2_only"`, `"always"`, `"off"`). |
