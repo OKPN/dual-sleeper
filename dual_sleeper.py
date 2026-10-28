@@ -209,8 +209,8 @@ is_lightning_forecast_risk = False
 hotkey_state2_triggered = False
 last_hotkey_time = 0.0
 
-# コントローラー前回のパケット番号記憶用辞書 (プレイヤー0〜3)
-last_xinput_packets = {}
+# コントローラー前回の入力状態記憶用辞書 (プレイヤー0〜3: デッドゾーン対応)
+last_controller_states = {}
 
 def is_audio_session_active():
     """
@@ -332,9 +332,10 @@ def get_idle_duration():
 def check_controller_activity():
     """
     接続されているゲームコントローラー(XInput)の入力をチェックし、
-    操作が行われた場合は True を返します。
+    ボタン押下やデッドゾーンを超えるスティック/トリガー操作が行われた場合のみ True を返します。
+    (※高ポーリングによるdwPacketNumber単体の変動は無視し、無操作放置の誤検知を完全防止)
     """
-    global xinput_dll, last_xinput_packets
+    global xinput_dll, last_controller_states
     if not xinput_dll:
         return False
 
@@ -346,11 +347,34 @@ def check_controller_activity():
         try:
             res = xinput_dll.XInputGetState(i, ctypes.byref(state))
             if res == 0:  # ERROR_SUCCESS (接続中)
-                pkt = state.dwPacketNumber
-                prev_pkt = last_xinput_packets.get(i, None)
-                if prev_pkt is not None and pkt != prev_pkt:
-                    activity_detected = True
-                last_xinput_packets[i] = pkt
+                gp = state.Gamepad
+                
+                # 1. いずれかのボタンが押されているか
+                has_button = (gp.wButtons != 0)
+                # 2. アナログトリガーがしきい値(30 / 255)を超えて引かれているか
+                has_trigger = (gp.bLeftTrigger > 30 or gp.bRightTrigger > 30)
+                # 3. アナログスティックが公式推奨デッドゾーンを超えて倒されているか
+                #    (XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE=7849, RIGHT_THUMB_DEADZONE=8689)
+                has_stick = (abs(gp.sThumbLX) > 7849 or abs(gp.sThumbLY) > 7849 or 
+                             abs(gp.sThumbRX) > 8689 or abs(gp.sThumbRY) > 8689)
+                
+                if has_button or has_trigger or has_stick:
+                    # 倒しっぱなし放置等の誤検知を防ぐため、入力値に変化があるかをチェック
+                    current_input_tuple = (
+                        gp.wButtons,
+                        gp.bLeftTrigger > 30,
+                        gp.bRightTrigger > 30,
+                        gp.sThumbLX // 2000,
+                        gp.sThumbLY // 2000,
+                        gp.sThumbRX // 2000,
+                        gp.sThumbRY // 2000
+                    )
+                    prev_input = last_controller_states.get(i, None)
+                    if prev_input != current_input_tuple:
+                        activity_detected = True
+                    last_controller_states[i] = current_input_tuple
+                else:
+                    last_controller_states[i] = None
         except Exception:
             pass
 
