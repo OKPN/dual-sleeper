@@ -3031,14 +3031,21 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             if high_net_continue_start_time is None:
                                 high_net_continue_start_time = time.monotonic()
                             elif time.monotonic() - high_net_continue_start_time >= 3.0:
-                                # 時限ポートの猶予時間を満了している場合は、スリープタイマーリセットを行わずにスリープへ進める
-                                if is_timed_port_expired:
+                                # 【時限ポート単独通信 ＆ 猶予満了判定】
+                                # 条件: 時限ポート接続中 かつ 10分満了 かつ 高トラフィック(Steam等の別DL)ではない単独通信
+                                is_timed_port_solo_expired = has_tp_conn and is_timed_port_expired and (speed < high_net_limit)
+                                
+                                if is_timed_port_solo_expired:
+                                    # メール吸い上げ単独の満了なので、スリープタイマーをリセットせずスリープ待機へ進める！
                                     if not timed_port_notified_expired:
-                                        print(f"\n{get_timestamp()} [時限猶予満了] ⏱️ 時限タスク通信 (ポート: {tp_ports_str}) の最大猶予時間 ({int(tp_max_sec)}秒) に達しました。通信継続中ですがスリープ待機へ移行します。")
+                                        print(f"\n{get_timestamp()} [時限猶予満了] ⏱️ 時限タスク単独通信 (ポート: {tp_ports_str}) の最大猶予時間 ({int(tp_max_sec)}秒) に達しました。単独処理のためスリープ待機へ移行します。")
                                         timed_port_notified_expired = True
                                 else:
+                                    # 他の通信がある場合（高トラフィック >= high_net_limit）や、時限満了前は従来ルールを優先してリセット！
                                     if low_net_standby_start_time is not None:
-                                        if has_tp_conn:
+                                        if speed >= high_net_limit and is_timed_port_expired:
+                                            print(f"\n{get_timestamp()} [タイマーリセット] 📡 高トラフィック ({speed:.1f} KB/s >= {high_net_limit:.1f} KB/s) を検知したため、別通信を最優先してスリープタイマーをリセットしました。")
+                                        elif has_tp_conn and not is_timed_port_expired:
                                             rem_tp = max(0, int(tp_max_sec - (time.monotonic() - timed_port_first_active_time)))
                                             rem_tp_str = f"{rem_tp // 60}分{rem_tp % 60}秒" if rem_tp >= 60 else f"{rem_tp}秒"
                                             print(f"\n{get_timestamp()} [タイマーリセット] 📥 時限タスク通信 (ポート: {tp_ports_str} / 残り猶予: {rem_tp_str}) を検知したためスリープタイマーをリセットしました。")
@@ -3056,9 +3063,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     is_no_sleep = is_no_sleep_time(config.get("no_sleep_start_hour"), config.get("no_sleep_end_hour"))
                     
                     # 【スリープを許可する条件】
-                    # ※時限ポート満了時は高トラフィック(speed >= high_net_limit)制限を解除して確実にスリープさせる
-                    allow_high_net = (speed < high_net_limit) or is_timed_port_expired
-                    allow_sleep = (not is_gpu_busy_with_python) and allow_high_net and (not is_downloading) and (not is_no_sleep) and (not is_audio_active)
+                    # ※高トラフィック(speed >= high_net_limit: Steam等のゲームDL)がある場合は、メール時限満了であっても絶対にスリープさせない！
+                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep) and (not is_audio_active)
                     
                     # ===== 【電源プロファイル制御: 非対称ヒステリシス完全放置消灯 ＆ 自動化タスク省電力固定】 =====
                     p_cfg = config.get("power_plan_control", {})
@@ -3380,6 +3386,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             rem_tp = max(0, int(tp_max_sec - (time.monotonic() - timed_port_first_active_time)))
                             rem_tp_str = f"{rem_tp // 60}分{rem_tp % 60}秒" if rem_tp >= 60 else f"{rem_tp}秒"
                             print(f"\r{get_timestamp()} [モニターOFF] 📥 時限タスク通信中 (残り猶予: {rem_tp_str}) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
+                        elif has_tp_conn and is_timed_port_expired and speed >= high_net_limit:
+                            print(f"\r{get_timestamp()} [モニターOFF] 📡 別通信検知中 (高トラフィック: {speed:.1f} KB/s) | スリープ保護  ", end="", flush=True)
                         elif is_downloading:
                             print(f"\r{get_timestamp()} [モニターOFF] ファイルダウンロード中... | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif speed >= high_net_limit:

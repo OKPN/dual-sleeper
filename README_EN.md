@@ -80,6 +80,9 @@ No complex installation or account registration required. It runs quietly in the
 | | `high_network_limit_kbs` | `625.0` | KB/s | High-traffic threshold for streaming (5 Mbps equivalent). |
 | **Game Server**| `game_server_protection.enabled` | `false` | bool | Enable active port connection protection (Palworld, Minecraft, etc.). |
 | | `game_server_protection.ports` | `[8211, 2283]` | array/int | Target port list to physically monitor active player connections. |
+| **Timed Task** | `timed_port_protection.enabled` | `false` | bool | Maximum grace period for background tasks (email fetch, etc.). |
+| | `timed_port_protection.ports` | `[993, 995]` | list | Remote destination port list (POP3s: 995, IMAPs: 993, etc.). |
+| | `timed_port_protection.max_duration_seconds` | `600` | sec | Max allowance duration after screen-off (10 mins; forces sleep only when solo, prioritizes normal rules if other traffic exists). |
 | **Notifications**| `discord_webhook_url` | `""` | URL | Discord Webhook URL for one-way alerts. |
 | | `telegram_bot_token` / `chat_id` | `""` / `""` | string | Telegram Bot Token and Chat ID for remote control and alerts. |
 | | `wol_url` | `""` | URL | Web WoL (CloudWaker) one-tap wake-up URL. |

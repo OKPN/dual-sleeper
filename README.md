@@ -88,7 +88,7 @@
 | | `game_server_protection.ports` | `[8211, 2283]` | 配列/数値 | プレイヤー接続を物理監視する対象ポート番号リスト。 |
 | **時限タスク** | `timed_port_protection.enabled` | `false` | bool | バックグラウンド時限通信タスク（メール吸い上げ等）の最大猶予制御。 |
 | | `timed_port_protection.ports` | `[993, 995]` | 配列 | 外部宛先ポート番号リスト（POP3s: 995, IMAPs: 993 等）。 |
-| | `timed_port_protection.max_duration_seconds` | `600` | 秒 | 消灯後にタスク通信を許可する最大猶予時間（10分、満了後は強制スリープ）。 |
+| | `timed_port_protection.max_duration_seconds` | `600` | 秒 | 消灯後にタスク通信を許可する最大猶予時間（10分、単独通信時のみ満了でスリープ、別通信時は通常ルール最優先）。 |
 | **通知・遠隔** | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
 | | `telegram_bot_token` / `chat_id` | `""` / `""` | 文字列 | Telegram Bot 連携トークン ＆ チャットID。 |
 | | `wol_url` | `""` | URL | Web WoL (CloudWaker) による PC 遠隔起動 URL。 |
