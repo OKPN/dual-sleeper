@@ -1318,6 +1318,66 @@ def check_game_server_port(ports_input):
 
     return False, 0, ports_str
 
+def check_remote_ports_active(ports_input):
+    """指定された1つまたは複数のリモート（外部宛先）ポート（例: 993, 995）へのアクティブなTCP接続が存在するか判定します。"""
+    if ports_input is None:
+        return False, 0, ""
+
+    if isinstance(ports_input, (int, str)):
+        raw_list = [ports_input]
+    elif isinstance(ports_input, list):
+        raw_list = ports_input
+    else:
+        return False, 0, ""
+
+    target_ports = set()
+    for p in raw_list:
+        try:
+            target_ports.add(int(p))
+        except (ValueError, TypeError):
+            pass
+
+    if not target_ports:
+        return False, 0, ""
+
+    ports_str = ", ".join(str(p) for p in sorted(target_ports))
+    active_count = 0
+
+    # 1. psutil によるソケット検査 (TCP)
+    try:
+        conns = psutil.net_connections(kind='tcp')
+        for c in conns:
+            if c.status == 'ESTABLISHED' and c.raddr:
+                r_port = None
+                if hasattr(c.raddr, 'port'):
+                    r_port = c.raddr.port
+                elif isinstance(c.raddr, tuple) and len(c.raddr) >= 2:
+                    r_port = c.raddr[1]
+                if r_port in target_ports:
+                    active_count += 1
+        if active_count > 0:
+            return True, active_count, ports_str
+    except Exception:
+        pass
+
+    # 2. netstat -ano のフォールバック解析
+    try:
+        output = subprocess.check_output("netstat -ano", shell=True, text=True, encoding='cp932', errors='ignore')
+        for line in output.splitlines():
+            if "ESTABLISHED" in line.upper():
+                parts = line.split()
+                if len(parts) >= 3:
+                    foreign_addr = parts[2]
+                    for p_num in target_ports:
+                        if foreign_addr.endswith(f":{p_num}"):
+                            active_count += 1
+        if active_count > 0:
+            return True, active_count, ports_str
+    except Exception:
+        pass
+
+    return False, 0, ports_str
+
 class NetworkMonitor:
     def __init__(self):
         self.last_io_by_nic = self._get_filtered_io()
@@ -2108,6 +2168,10 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
     monitor_off_input_time = None
     last_wakeup_time = time.monotonic()
     last_controller_input_time = 0.0
+    
+    # 時限ポート保護用変数 (メール吸い上げ等の最大猶予制御)
+    timed_port_first_active_time = None
+    timed_port_notified_expired = False
     last_game_server_active_time = 0.0
     
     # 大容量ダウンロード / 高通信完了通知用変数
@@ -2899,6 +2963,8 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     has_sent_10min_warning = False
                     force_power_mode = None # 操作復帰時は手動予約をクリアする
                     extended_standby_limit = 0 # 復帰時は一時延長を解除
+                    timed_port_first_active_time = None
+                    timed_port_notified_expired = False
                     continue
 
                 # 2. スタンバイ判定のためのネットワーク監視、GPU監視、ゲームサーバー保護およびオーディオセッション監視
@@ -2918,6 +2984,28 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     dynamic_net_limit = net_monitor.get_dynamic_threshold(margin_kbs)
                     median_sp = net_monitor.get_median_speed()
                     
+                    # 時限ポート保護判定 (timed_port_protection: 例 993, 995 メール吸い上げ等)
+                    tp_cfg = config.get("timed_port_protection", {})
+                    tp_enabled = isinstance(tp_cfg, dict) and tp_cfg.get("enabled", False)
+                    tp_ports = tp_cfg.get("ports", [993, 995]) if tp_enabled else []
+                    tp_max_sec = float(tp_cfg.get("max_duration_seconds", 600))
+                    
+                    has_tp_conn = False
+                    tp_ports_str = ""
+                    if tp_enabled and tp_ports:
+                        has_tp_conn, tp_count, tp_ports_str = check_remote_ports_active(tp_ports)
+
+                    is_timed_port_expired = False
+                    if tp_enabled and has_tp_conn:
+                        if timed_port_first_active_time is None:
+                            timed_port_first_active_time = time.monotonic()
+                        elapsed_tp = time.monotonic() - timed_port_first_active_time
+                        if elapsed_tp >= tp_max_sec:
+                            is_timed_port_expired = True
+                    else:
+                        timed_port_first_active_time = None
+                        timed_port_notified_expired = False
+
                     # 生速度 (speed) または 移動中央値 (median_sp) が動的上限を超えているか判定
                     is_net_busy = (speed > dynamic_net_limit or median_sp > dynamic_net_limit)
                     
@@ -2943,10 +3031,21 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             if high_net_continue_start_time is None:
                                 high_net_continue_start_time = time.monotonic()
                             elif time.monotonic() - high_net_continue_start_time >= 3.0:
-                                if low_net_standby_start_time is not None:
-                                    print(f"\n{get_timestamp()} [タイマーリセット] 🔄 持続通信 ({speed:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]) を3秒間継続検知したためスリープタイマーをリセットしました。")
-                                low_net_standby_start_time = time.monotonic()
-                                restore_original_power_scheme()
+                                # 時限ポートの猶予時間を満了している場合は、スリープタイマーリセットを行わずにスリープへ進める
+                                if is_timed_port_expired:
+                                    if not timed_port_notified_expired:
+                                        print(f"\n{get_timestamp()} [時限猶予満了] ⏱️ 時限タスク通信 (ポート: {tp_ports_str}) の最大猶予時間 ({int(tp_max_sec)}秒) に達しました。通信継続中ですがスリープ待機へ移行します。")
+                                        timed_port_notified_expired = True
+                                else:
+                                    if low_net_standby_start_time is not None:
+                                        if has_tp_conn:
+                                            rem_tp = max(0, int(tp_max_sec - (time.monotonic() - timed_port_first_active_time)))
+                                            rem_tp_str = f"{rem_tp // 60}分{rem_tp % 60}秒" if rem_tp >= 60 else f"{rem_tp}秒"
+                                            print(f"\n{get_timestamp()} [タイマーリセット] 📥 時限タスク通信 (ポート: {tp_ports_str} / 残り猶予: {rem_tp_str}) を検知したためスリープタイマーをリセットしました。")
+                                        else:
+                                            print(f"\n{get_timestamp()} [タイマーリセット] 🔄 持続通信 ({speed:.1f} > 上限 {dynamic_net_limit:.1f} KB/s [ベース{base_sp:.1f}+マージン{margin_kbs:.1f}]) を3秒間継続検知したためスリープタイマーをリセットしました。")
+                                    low_net_standby_start_time = time.monotonic()
+                                    restore_original_power_scheme()
                     else:
                         high_net_continue_start_time = None
 
@@ -2957,8 +3056,9 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                     is_no_sleep = is_no_sleep_time(config.get("no_sleep_start_hour"), config.get("no_sleep_end_hour"))
                     
                     # 【スリープを許可する条件】
-                    # ※オーディオセッションアクティブ中(is_audio_active) もスリープを阻害保護する
-                    allow_sleep = (not is_gpu_busy_with_python) and (speed < high_net_limit) and (not is_downloading) and (not is_no_sleep) and (not is_audio_active)
+                    # ※時限ポート満了時は高トラフィック(speed >= high_net_limit)制限を解除して確実にスリープさせる
+                    allow_high_net = (speed < high_net_limit) or is_timed_port_expired
+                    allow_sleep = (not is_gpu_busy_with_python) and allow_high_net and (not is_downloading) and (not is_no_sleep) and (not is_audio_active)
                     
                     # ===== 【電源プロファイル制御: 非対称ヒステリシス完全放置消灯 ＆ 自動化タスク省電力固定】 =====
                     p_cfg = config.get("power_plan_control", {})
@@ -3276,6 +3376,10 @@ AI学習サーバー・リモートPC向け インテリジェント電源＆モ
                             print(f"\r{get_timestamp()} [モニターOFF] 🎙️ 通話/音声ストリーム検知中 (スリープ保護) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif is_gpu_busy_with_python:
                             print(f"\r{get_timestamp()} [モニターOFF] 🤖 AI利用中 (Python GPU: {gpu_util}%) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
+                        elif has_tp_conn and not is_timed_port_expired:
+                            rem_tp = max(0, int(tp_max_sec - (time.monotonic() - timed_port_first_active_time)))
+                            rem_tp_str = f"{rem_tp // 60}分{rem_tp % 60}秒" if rem_tp >= 60 else f"{rem_tp}秒"
+                            print(f"\r{get_timestamp()} [モニターOFF] 📥 時限タスク通信中 (残り猶予: {rem_tp_str}) | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif is_downloading:
                             print(f"\r{get_timestamp()} [モニターOFF] ファイルダウンロード中... | 通信: {speed:.1f} KB/s  ", end="", flush=True)
                         elif speed >= high_net_limit:

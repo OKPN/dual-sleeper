@@ -89,5 +89,13 @@
     "discord:30"
   ],
   "server_mode": "off",
-  "server_mode_standby_delay_seconds": 600
+  "server_mode_standby_delay_seconds": 600,
+  "timed_port_protection": {
+    "enabled": false,
+    "ports": [
+      993,
+      995
+    ],
+    "max_duration_seconds": 600
+  }
 }

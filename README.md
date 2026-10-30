@@ -86,6 +86,9 @@
 | | `high_network_limit_kbs` | `625.0` | KB/s | 配信中などの高トラフィックとみなす保護しきい値（5 Mbps相当）。 |
 | **ゲーム保護** | `game_server_protection.enabled` | `false` | bool | パルワールド等のゲーム専用ポート監視保護（初期無効）。 |
 | | `game_server_protection.ports` | `[8211, 2283]` | 配列/数値 | プレイヤー接続を物理監視する対象ポート番号リスト。 |
+| **時限タスク** | `timed_port_protection.enabled` | `false` | bool | バックグラウンド時限通信タスク（メール吸い上げ等）の最大猶予制御。 |
+| | `timed_port_protection.ports` | `[993, 995]` | 配列 | 外部宛先ポート番号リスト（POP3s: 995, IMAPs: 993 等）。 |
+| | `timed_port_protection.max_duration_seconds` | `600` | 秒 | 消灯後にタスク通信を許可する最大猶予時間（10分、満了後は強制スリープ）。 |
 | **通知・遠隔** | `discord_webhook_url` | `""` | URL | Discord Webhook URL。 |
 | | `telegram_bot_token` / `chat_id` | `""` / `""` | 文字列 | Telegram Bot 連携トークン ＆ チャットID。 |
 | | `wol_url` | `""` | URL | Web WoL (CloudWaker) による PC 遠隔起動 URL。 |
